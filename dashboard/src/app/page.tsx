@@ -70,7 +70,7 @@ export default function Home() {
     conditions: Array<{ stat: string; target: number | ""; team: string }>;
   }>({
     fixtureId: null,
-    conditions: [{ stat: "Goals", target: "", team: "Home" }]
+    conditions: [{ stat: "Corners", target: "", team: "Home" }]
   });
 
   const API_BASE = "http://localhost:5000";
@@ -130,7 +130,7 @@ export default function Home() {
   const handleAddCondition = () => {
     setNewTrackForm({
       ...newTrackForm,
-      conditions: [...newTrackForm.conditions, { stat: "Goals", target: "", team: "Home" }]
+      conditions: [...newTrackForm.conditions, { stat: "Corners", target: "", team: "Home" }]
     });
   };
 
@@ -168,7 +168,7 @@ export default function Home() {
     // Reset form
     setNewTrackForm({
       fixtureId: null,
-      conditions: [{ stat: "Goals", target: "", team: "Home" }]
+      conditions: [{ stat: "Corners", target: "", team: "Home" }]
     });
   };
 
@@ -275,13 +275,18 @@ export default function Home() {
                         value={condition.stat}
                         onChange={(e) => handleConditionChange(index, "stat", e.target.value)}
                       >
-                        <option value="Goals">Goals</option>
                         <option value="Corners">Corners</option>
                         <option value="Total Shots">Total Shots</option>
+                        <option value="Goals">Goals</option>
                         <option value="Shots on Target">Shots on Target</option>
                         <option value="Fouls Committed">Fouls Committed</option>
+                        <option value="Offsides">Offsides</option>
+                        <option value="Possession %">Possession %</option>
+                        <option value="Pass Accuracy %">Pass Accuracy %</option>
                         <option value="Yellow Cards">Yellow Cards</option>
                         <option value="Red Cards">Red Cards</option>
+                        <option value="Tackles">Tackles</option>
+                        <option value="Interceptions">Interceptions</option>
                       </select>
                       <input
                         type="number"
