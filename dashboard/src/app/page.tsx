@@ -52,7 +52,7 @@ interface HistorySession {
 export default function Home() {
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [selectedFixtureId, setSelectedFixtureId] = useState<number | null>(null);
-  const [liveData, setLiveData] = useState<LiveData | null>(null);
+  const [allLiveData, setAllLiveData] = useState<Record<number, LiveData>>({});
   const [history, setHistory] = useState<HistorySession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -80,19 +80,23 @@ export default function Home() {
     fetchHistory();
   }, []);
 
-  // Fetch live stats automatically when a fixture is selected or on live tab
+  // Fetch live stats for ALL fixtures continuously in the background
   useEffect(() => {
-    if (selectedFixtureId && activeTab === "live") {
-      // Fetch immediately when fixture is selected
-      fetchLiveStats(selectedFixtureId);
-      
-      // Then set up interval for continuous updates
-      const interval = setInterval(() => {
-        fetchLiveStats(selectedFixtureId);
-      }, 2000);
-      return () => clearInterval(interval);
-    }
-  }, [selectedFixtureId, activeTab]);
+    if (fixtures.length === 0) return;
+
+    // Fetch all fixtures immediately
+    fixtures.forEach(fixture => {
+      fetchLiveStats(fixture.fixture_id);
+    });
+
+    // Then set up interval for continuous updates
+    const interval = setInterval(() => {
+      fixtures.forEach(fixture => {
+        fetchLiveStats(fixture.fixture_id);
+      });
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [fixtures]);
 
   // Fetch history periodically when on history tab
   useEffect(() => {
@@ -126,7 +130,10 @@ export default function Home() {
       const res = await fetch(`${API_BASE}/fixtures/statistics?fixture=${id}`);
       if (!res.ok) throw new Error("Failed to fetch stats");
       const data = await res.json();
-      setLiveData(data);
+      setAllLiveData(prev => ({
+        ...prev,
+        [id]: data
+      }));
     } catch (err) {
       console.error(err);
     }
@@ -387,75 +394,90 @@ export default function Home() {
 
             {/* Main Content: Stats */}
             <div className="lg:col-span-8 space-y-6">
-              {liveData ? (
-                <>
-                  {/* Scoreboard / Status */}
-                  <div className="bg-gradient-to-br from-blue-900/40 to-gray-900 rounded-2xl border border-blue-500/20 p-8 shadow-xl">
-                    <div className="flex justify-between items-center mb-8">
-                      <div className="flex items-center gap-2 px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-xs font-bold animate-pulse">
-                        <div className="h-2 w-2 bg-green-500 rounded-full"></div>
-                        LIVE
-                      </div>
-                      <div className="flex items-center gap-2 text-gray-400 font-mono">
-                        <Clock className="h-4 w-4" />
-                        <span className="text-lg">{liveData.elapsed}\'</span>
-                      </div>
-                    </div>
-                    
-                    <div className="flex justify-around items-center gap-4">
-                      <div className="text-center flex-1">
-                        <div className="h-20 w-20 bg-gray-800 rounded-full mx-auto mb-4 flex items-center justify-center text-3xl shadow-inner border border-gray-700">
-                          {liveData.response[0].team.name.charAt(0)}
-                        </div>
-                        <h3 className="text-xl font-bold">{liveData.response[0].team.name}</h3>
-                        <p className="text-gray-500 text-sm">Home</p>
-                      </div>
-                      
-                      <div className="text-4xl font-black text-gray-700 select-none">VS</div>
-                      
-                      <div className="text-center flex-1">
-                        <div className="h-20 w-20 bg-gray-800 rounded-full mx-auto mb-4 flex items-center justify-center text-3xl shadow-inner border border-gray-700">
-                          {liveData.response[1].team.name.charAt(0)}
-                        </div>
-                        <h3 className="text-xl font-bold">{liveData.response[1].team.name}</h3>
-                        <p className="text-gray-500 text-sm">Away</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Stats Grid */}
-                  <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden p-6 space-y-6">
-                    <h4 className="font-bold text-center text-gray-400 mb-6 uppercase tracking-wider text-sm">Match Statistics</h4>
-                    <div className="space-y-6">
-                      {liveData.response[0].statistics.map((stat, index) => {
-                        const homeValue = stat.value;
-                        const awayValue = liveData.response[1].statistics[index].value;
-                        const total = homeValue + awayValue;
-                        const homePercent = total === 0 ? 50 : (homeValue / total) * 100;
-                        
-                        return (
-                          <div key={stat.type} className="space-y-2">
-                            <div className="flex justify-between items-center text-sm font-bold">
-                              <span className="text-blue-400 w-12 text-left">{homeValue}</span>
-                              <span className="text-gray-500 font-normal uppercase text-xs">{stat.type}</span>
-                              <span className="text-emerald-400 w-12 text-right">{awayValue}</span>
-                            </div>
-                            <div className="h-2 bg-gray-800 rounded-full overflow-hidden flex">
-                              <div 
-                                style={{ width: `${homePercent}%` }} 
-                                className="bg-blue-500 h-full transition-all duration-500" 
-                              />
-                              <div 
-                                style={{ width: `${100 - homePercent}%` }} 
-                                className="bg-emerald-500 h-full transition-all duration-500" 
-                              />
-                            </div>
+              {selectedFixtureId && allLiveData[selectedFixtureId] ? (
+                (() => {
+                  const liveData = allLiveData[selectedFixtureId];
+                  const homeGoals = liveData.response[0].statistics.find(s => s.type === "Goals")?.value ?? 0;
+                  const awayGoals = liveData.response[1].statistics.find(s => s.type === "Goals")?.value ?? 0;
+                  
+                  return (
+                    <>
+                      {/* Scoreboard / Status */}
+                      <div className="bg-gradient-to-br from-blue-900/40 to-gray-900 rounded-2xl border border-blue-500/20 p-8 shadow-xl">
+                        <div className="flex justify-between items-center mb-8">
+                          <div className="flex items-center gap-2 px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-xs font-bold animate-pulse">
+                            <div className="h-2 w-2 bg-green-500 rounded-full"></div>
+                            LIVE
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </>
+                          <div className="flex items-center gap-2 text-gray-400 font-mono">
+                            <Clock className="h-4 w-4" />
+                            <span className="text-lg">{liveData.elapsed}\'</span>
+                          </div>
+                        </div>
+                        
+                        <div className="flex justify-around items-center gap-4">
+                          <div className="text-center flex-1">
+                            <div className="h-20 w-20 bg-gray-800 rounded-full mx-auto mb-4 flex items-center justify-center text-3xl shadow-inner border border-gray-700">
+                              {liveData.response[0].team.name.charAt(0)}
+                            </div>
+                            <h3 className="text-xl font-bold">{liveData.response[0].team.name}</h3>
+                            <p className="text-gray-500 text-sm">Home</p>
+                          </div>
+                          
+                          <div className="flex flex-col items-center">
+                            <div className="text-5xl font-black text-white mb-2">
+                              {homeGoals} - {awayGoals}
+                            </div>
+                            <div className="text-xs text-gray-500 uppercase tracking-wider">Score</div>
+                          </div>
+                          
+                          <div className="text-center flex-1">
+                            <div className="h-20 w-20 bg-gray-800 rounded-full mx-auto mb-4 flex items-center justify-center text-3xl shadow-inner border border-gray-700">
+                              {liveData.response[1].team.name.charAt(0)}
+                            </div>
+                            <h3 className="text-xl font-bold">{liveData.response[1].team.name}</h3>
+                            <p className="text-gray-500 text-sm">Away</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Stats Grid */}
+                      <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden p-6 space-y-6">
+                        <h4 className="font-bold text-center text-gray-400 mb-6 uppercase tracking-wider text-sm">Match Statistics</h4>
+                        <div className="space-y-6">
+                          {liveData.response[0].statistics
+                            .filter(stat => stat.type !== "Goals")
+                            .map((stat, index) => {
+                              const homeValue = stat.value;
+                              const awayValue = liveData.response[1].statistics.find(s => s.type === stat.type)?.value ?? 0;
+                              const total = homeValue + awayValue;
+                              const homePercent = total === 0 ? 50 : (homeValue / total) * 100;
+                              
+                              return (
+                                <div key={stat.type} className="space-y-2">
+                                  <div className="flex justify-between items-center text-sm font-bold">
+                                    <span className="text-blue-400 w-12 text-left">{homeValue}</span>
+                                    <span className="text-gray-500 font-normal uppercase text-xs">{stat.type}</span>
+                                    <span className="text-emerald-400 w-12 text-right">{awayValue}</span>
+                                  </div>
+                                  <div className="h-2 bg-gray-800 rounded-full overflow-hidden flex">
+                                    <div 
+                                      style={{ width: `${homePercent}%` }} 
+                                      className="bg-blue-500 h-full transition-all duration-500" 
+                                    />
+                                    <div 
+                                      style={{ width: `${100 - homePercent}%` }} 
+                                      className="bg-emerald-500 h-full transition-all duration-500" 
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()
               ) : (
                 <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-gray-500 bg-gray-900/50 rounded-2xl border border-dashed border-gray-800">
                   <Activity className="h-12 w-12 mb-4 opacity-20" />
