@@ -78,16 +78,32 @@ export default function Home() {
   useEffect(() => {
     fetchFixtures();
     fetchHistory();
-    const interval = setInterval(() => {
-      if (selectedFixtureId && activeTab === "live") {
+  }, []);
+
+  // Fetch live stats automatically when a fixture is selected or on live tab
+  useEffect(() => {
+    if (selectedFixtureId && activeTab === "live") {
+      // Fetch immediately when fixture is selected
+      fetchLiveStats(selectedFixtureId);
+      
+      // Then set up interval for continuous updates
+      const interval = setInterval(() => {
         fetchLiveStats(selectedFixtureId);
-      }
-      if (activeTab === "history") {
-        fetchHistory();
-      }
-    }, 2000);
-    return () => clearInterval(interval);
+      }, 2000);
+      return () => clearInterval(interval);
+    }
   }, [selectedFixtureId, activeTab]);
+
+  // Fetch history periodically when on history tab
+  useEffect(() => {
+    if (activeTab === "history") {
+      fetchHistory();
+      const interval = setInterval(() => {
+        fetchHistory();
+      }, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [activeTab]);
 
   const fetchFixtures = async () => {
     try {
@@ -352,7 +368,6 @@ export default function Home() {
                     key={fixture.fixture_id}
                     onClick={() => {
                       setSelectedFixtureId(fixture.fixture_id);
-                      setLiveData(null);
                     }}
                     className={`w-full p-4 rounded-xl border transition-all text-left flex items-center justify-between group ${
                       selectedFixtureId === fixture.fixture_id 
