@@ -56,7 +56,22 @@ export default function Home() {
   const [history, setHistory] = useState<HistorySession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"live" | "history">("live");
+  const [activeTab, setActiveTab] = useState<"live" | "history" | "track">("live");
+
+  // Track Matches State
+  const [trackedMatches, setTrackedMatches] = useState<Array<{
+    fixtureId: number;
+    homeTeam: string;
+    awayTeam: string;
+    conditions: Array<{ stat: string; target: number; team: string }>;
+  }>>([]);
+  const [newTrackForm, setNewTrackForm] = useState<{
+    fixtureId: number | null;
+    conditions: Array<{ stat: string; target: number | ""; team: string }>;
+  }>({
+    fixtureId: null,
+    conditions: [{ stat: "Goals", target: "", team: "Home" }]
+  });
 
   const API_BASE = "http://localhost:5000";
 
@@ -110,6 +125,51 @@ export default function Home() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleAddCondition = () => {
+    setNewTrackForm({
+      ...newTrackForm,
+      conditions: [...newTrackForm.conditions, { stat: "Goals", target: "", team: "Home" }]
+    });
+  };
+
+  const handleRemoveCondition = (index: number) => {
+    const updatedConditions = newTrackForm.conditions.filter((_, i) => i !== index);
+    setNewTrackForm({ ...newTrackForm, conditions: updatedConditions });
+  };
+
+  const handleConditionChange = (index: number, field: string, value: string | number) => {
+    const updatedConditions = [...newTrackForm.conditions];
+    updatedConditions[index] = { ...updatedConditions[index], [field]: value };
+    setNewTrackForm({ ...newTrackForm, conditions: updatedConditions });
+  };
+
+  const handleTrackMatch = () => {
+    if (!newTrackForm.fixtureId) return;
+    
+    // Validate conditions
+    const validConditions = newTrackForm.conditions.filter(c => c.target !== "" && Number(c.target) >= 0);
+    if (validConditions.length === 0) return;
+
+    const fixture = fixtures.find(f => f.fixture_id === newTrackForm.fixtureId);
+    if (!fixture) return;
+
+    setTrackedMatches([
+      ...trackedMatches,
+      {
+        fixtureId: fixture.fixture_id,
+        homeTeam: fixture.home_team,
+        awayTeam: fixture.away_team,
+        conditions: validConditions as Array<{ stat: string; target: number; team: string }>
+      }
+    ]);
+
+    // Reset form
+    setNewTrackForm({
+      fixtureId: null,
+      conditions: [{ stat: "Goals", target: "", team: "Home" }]
+    });
   };
 
   if (loading) {
@@ -167,12 +227,116 @@ export default function Home() {
             >
               <HistoryIcon className="h-4 w-4" /> History
             </button>
+            <button 
+              onClick={() => setActiveTab("track")}
+              className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${activeTab === "track" ? "bg-gray-700 text-white shadow-sm" : "text-gray-400 hover:text-gray-200"}`}
+            >
+              <Settings className="h-4 w-4" /> Track
+            </button>
           </nav>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto p-6">
-        {activeTab === "live" ? (
+        {activeTab === "track" ? (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold">Track Matches</h2>
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-lg">
+              <h3 className="text-xl font-bold mb-4">Add Match to Track</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-400 mb-1">Select Match</label>
+                  <select
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg p-2 text-white"
+                    value={newTrackForm.fixtureId || ""}
+                    onChange={(e) => setNewTrackForm({ ...newTrackForm, fixtureId: Number(e.target.value) })}
+                  >
+                    <option value="">Select a match...</option>
+                    {fixtures.map(f => (
+                      <option key={f.fixture_id} value={f.fixture_id}>{f.home_team} vs {f.away_team}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-400 mb-2">Conditions</label>
+                  {newTrackForm.conditions.map((condition, index) => (
+                    <div key={index} className="flex gap-2 items-center mb-2">
+                      <select
+                        className="bg-gray-800 border border-gray-700 rounded-lg p-2 text-white flex-1"
+                        value={condition.team}
+                        onChange={(e) => handleConditionChange(index, "team", e.target.value)}
+                      >
+                        <option value="Home">Home</option>
+                        <option value="Away">Away</option>
+                      </select>
+                      <select
+                        className="bg-gray-800 border border-gray-700 rounded-lg p-2 text-white flex-1"
+                        value={condition.stat}
+                        onChange={(e) => handleConditionChange(index, "stat", e.target.value)}
+                      >
+                        <option value="Goals">Goals</option>
+                        <option value="Corners">Corners</option>
+                        <option value="Total Shots">Total Shots</option>
+                        <option value="Shots on Target">Shots on Target</option>
+                        <option value="Fouls Committed">Fouls Committed</option>
+                        <option value="Yellow Cards">Yellow Cards</option>
+                        <option value="Red Cards">Red Cards</option>
+                      </select>
+                      <input
+                        type="number"
+                        placeholder="Target"
+                        className="bg-gray-800 border border-gray-700 rounded-lg p-2 text-white w-24"
+                        value={condition.target}
+                        onChange={(e) => handleConditionChange(index, "target", e.target.value ? Number(e.target.value) : "")}
+                      />
+                      {newTrackForm.conditions.length > 1 && (
+                        <button
+                          onClick={() => handleRemoveCondition(index)}
+                          className="p-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
+                        >
+                          X
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    onClick={handleAddCondition}
+                    className="mt-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm"
+                  >
+                    + Add Statistic
+                  </button>
+                </div>
+
+                <button
+                  onClick={handleTrackMatch}
+                  disabled={!newTrackForm.fixtureId}
+                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-bold transition-all mt-4"
+                >
+                  Track Match
+                </button>
+              </div>
+            </div>
+
+            {trackedMatches.length > 0 && (
+              <div className="space-y-4">
+                <h3 className="text-xl font-bold">Currently Tracking</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {trackedMatches.map((match, idx) => (
+                    <div key={idx} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                      <div className="font-bold mb-2">{match.homeTeam} vs {match.awayTeam}</div>
+                      <div className="space-y-1 text-sm text-gray-400">
+                        {match.conditions.map((c, cIdx) => (
+                          <div key={cIdx}>• {c.team} {c.stat} ≥ {c.target}</div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : activeTab === "live" ? (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Sidebar: Match Selection */}
             <div className="lg:col-span-4 space-y-4">
