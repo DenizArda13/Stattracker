@@ -67,44 +67,53 @@ def generate_mock_stats(fixture_id):
     elapsed = min(progress * 5, 90)
 
     home_team, away_team = _get_fixture_teams(fixture_id)
+    
+    # Use fixture_id to create deterministic variation between matches
+    # This prevents all matches from having identical stats
+    fid = int(fixture_id)
+    v1 = fid % 3
+    v2 = fid % 4
+    v3 = fid % 2
+    v4 = (fid + 1) % 3
 
     # Calculate possession to ensure it sums to 100 and is never negative
-    home_possession = min(100, max(0, base_val * 5 + 30))
+    # Vary possession based on fixture_id
+    home_possession = min(100, max(0, base_val * 5 + 30 + (v1 * 5)))
     away_possession = 100 - home_possession
 
     stats = [
         {
             "team": {"name": home_team},
             "statistics": [
-                {"type": "Corners", "value": base_val},
-                {"type": "Total Shots", "value": base_val + 2},
-                {"type": "Goals", "value": base_val // 3},
-                {"type": "Shots on Target", "value": base_val + 1},
-                {"type": "Fouls Committed", "value": base_val * 2},
-                {"type": "Offsides", "value": max(0, base_val - 2)},
+                {"type": "Corners", "value": base_val + v1},
+                {"type": "Total Shots", "value": base_val + 2 + v2},
+                {"type": "Goals", "value": (base_val + v3) // 3},
+                {"type": "Shots on Target", "value": base_val + 1 + v1},
+                {"type": "Fouls Committed", "value": base_val * 2 + v2},
+                {"type": "Offsides", "value": max(0, base_val - 2 + v3)},
                 {"type": "Possession %", "value": home_possession},
-                {"type": "Pass Accuracy %", "value": min(100, base_val * 3 + 60)},
-                {"type": "Yellow Cards", "value": base_val // 4},
-                {"type": "Red Cards", "value": max(0, base_val // 8)},
-                {"type": "Tackles", "value": base_val * 2 + 5},
-                {"type": "Interceptions", "value": base_val + 3}
+                {"type": "Pass Accuracy %", "value": min(100, base_val * 3 + 60 + v4)},
+                {"type": "Yellow Cards", "value": (base_val + v2) // 4},
+                {"type": "Red Cards", "value": max(0, (base_val) // 12)},
+                {"type": "Tackles", "value": base_val * 2 + 5 + v1},
+                {"type": "Interceptions", "value": base_val + 3 + v2}
             ]
         },
         {
             "team": {"name": away_team},
             "statistics": [
-                {"type": "Corners", "value": max(0, base_val - 1)},
-                {"type": "Total Shots", "value": base_val + 1},
-                {"type": "Goals", "value": base_val // 4},
-                {"type": "Shots on Target", "value": base_val},
-                {"type": "Fouls Committed", "value": base_val * 2 + 1},
-                {"type": "Offsides", "value": max(0, base_val - 3)},
+                {"type": "Corners", "value": max(0, base_val - 1 + v2)},
+                {"type": "Total Shots", "value": base_val + 1 + v3},
+                {"type": "Goals", "value": (base_val + v4) // 4},
+                {"type": "Shots on Target", "value": base_val + v2},
+                {"type": "Fouls Committed", "value": base_val * 2 + 1 + v1},
+                {"type": "Offsides", "value": max(0, base_val - 3 + v2)},
                 {"type": "Possession %", "value": away_possession},
-                {"type": "Pass Accuracy %", "value": min(100, base_val * 3 + 55)},
-                {"type": "Yellow Cards", "value": base_val // 5},
-                {"type": "Red Cards", "value": max(0, base_val // 10)},
-                {"type": "Tackles", "value": base_val * 2 + 3},
-                {"type": "Interceptions", "value": base_val + 2}
+                {"type": "Pass Accuracy %", "value": min(100, base_val * 3 + 55 - v3)},
+                {"type": "Yellow Cards", "value": (base_val + v1) // 5},
+                {"type": "Red Cards", "value": max(0, (base_val) // 15)},
+                {"type": "Tackles", "value": base_val * 2 + 3 + v4},
+                {"type": "Interceptions", "value": base_val + 2 + v3}
             ]
         }
     ]
