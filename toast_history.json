@@ -16,5 +16,14 @@
     "fixture_id": 1003,
     "match_name": "Bayern Munich vs Borussia Dortmund",
     "type": "toast_notification"
+  },
+  {
+    "id": 1773154845995,
+    "timestamp": "2026-03-10T15:00:45.995455",
+    "title": "\ud83c\udfc6 Match Alert: All Conditions Met!",
+    "message": "Manchester City vs Liverpool\nHome Goals: 5, Home Corners: 17 at 75'",
+    "fixture_id": 1001,
+    "match_name": "Manchester City vs Liverpool",
+    "type": "toast_notification"
   }
 ]
