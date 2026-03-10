@@ -60,6 +60,16 @@ interface HistorySession {
   }>;
 }
 
+interface ToastHistoryItem {
+  id: number;
+  timestamp: string;
+  title: string;
+  message: string;
+  fixture_id?: number;
+  match_name?: string;
+  type: string;
+}
+
 interface TrackedMatch {
   fixtureId: number;
   homeTeam: string;
@@ -123,6 +133,7 @@ export default function Home() {
   const { permission, isSupported, requestPermission, sendNotification } = useBrowserNotifications();
   const notifiedConditionsRef = useRef<Set<string>>(new Set());
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [toastHistory, setToastHistory] = useState<ToastHistoryItem[]>([]);
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -137,6 +148,41 @@ export default function Home() {
   }, [removeToast]);
 
   const API_BASE = "http://localhost:5000";
+
+  // Fetch toast history - defined early for use in useEffect
+  const fetchToastHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/toasts`);
+      if (!res.ok) throw new Error("Failed to fetch toast history");
+      const data = await res.json();
+      setToastHistory(data.response);
+    } catch (err) {
+      console.error("Failed to fetch toast history:", err);
+    }
+  }, []);
+
+  // Log toast to server - defined early for use in useEffect
+  const logToastToServer = useCallback(async (title: string, message: string, fixtureId?: number, matchName?: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/toasts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title,
+          message,
+          fixture_id: fixtureId,
+          match_name: matchName,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to log toast");
+      // Refresh toast history after logging
+      fetchToastHistory();
+    } catch (err) {
+      console.error("Failed to log toast to server:", err);
+    }
+  }, [fetchToastHistory]);
 
   useEffect(() => {
     fetchFixtures();
@@ -202,6 +248,9 @@ export default function Home() {
           // Show in-app toast
           addToast(title, message, "success");
 
+          // Log to server for history
+          logToastToServer(title, message, match.fixtureId, `${match.homeTeam} vs ${match.awayTeam}`);
+
           // Mark as notified
           notifiedConditionsRef.current.add(matchKey);
         }
@@ -235,14 +284,16 @@ export default function Home() {
         }
       });
     });
-  }, [allLiveData, trackedMatches, sendNotification, addToast]);
+  }, [allLiveData, trackedMatches, sendNotification, addToast, logToastToServer]);
 
   // Fetch history periodically when on history tab
   useEffect(() => {
     if (activeTab === "history") {
       fetchHistory();
+      fetchToastHistory();
       const interval = setInterval(() => {
         fetchHistory();
+        fetchToastHistory();
       }, 2000);
       return () => clearInterval(interval);
     }
@@ -736,59 +787,109 @@ export default function Home() {
           </div>
         ) : (
           /* History Tab */
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <h2 className="text-2xl font-bold">Session History</h2>
-              <div className="text-sm text-gray-500">{history.length} sessions recorded</div>
+          <div className="space-y-8">
+            {/* Toast Notifications History */}
+            <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  <BellRing className="h-6 w-6 text-green-500" />
+                  Toast Notifications
+                </h2>
+                <div className="text-sm text-gray-500">{toastHistory.length} alerts recorded</div>
+              </div>
+
+              {toastHistory.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {toastHistory.slice().reverse().map((toast) => (
+                    <div key={toast.id} className="bg-gray-900 border border-green-500/30 rounded-2xl overflow-hidden shadow-lg">
+                      <div className="px-6 py-4 bg-green-900/20 border-b border-green-500/30 flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                          <CheckCircle2 className="h-5 w-5 text-green-500" />
+                          <span className="font-bold text-green-400">All Conditions Met!</span>
+                        </div>
+                        <span className="text-xs text-gray-400">
+                          {new Date(toast.timestamp).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="p-6">
+                        <div className="font-bold text-lg mb-2">{toast.match_name}</div>
+                        <div className="text-sm text-gray-400 whitespace-pre-line">{toast.message}</div>
+                        {toast.fixture_id && (
+                          <div className="mt-4 text-xs text-gray-500">
+                            Fixture #{toast.fixture_id}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="min-h-[200px] flex flex-col items-center justify-center text-gray-500 bg-gray-900/50 rounded-2xl border border-dashed border-gray-800">
+                  <BellRing className="h-12 w-12 mb-4 opacity-20" />
+                  <p>No toast notifications yet</p>
+                  <p className="text-sm text-gray-600 mt-1">Track a match and wait for all conditions to be met!</p>
+                </div>
+              )}
             </div>
 
-            {history.length > 0 ? (
-              <div className="space-y-4">
-                {history.map((session, idx) => (
-                  <div key={idx} className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-lg">
-                    <div className="px-6 py-4 bg-gray-800/50 border-b border-gray-800 flex justify-between items-center">
-                      <div className="flex items-center gap-3">
-                        <HistoryIcon className="h-5 w-5 text-blue-500" />
-                        <span className="font-bold">{new Date(session.timestamp).toLocaleString()}</span>
+            {/* Session History */}
+            <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  <HistoryIcon className="h-6 w-6 text-blue-500" />
+                  Session History
+                </h2>
+                <div className="text-sm text-gray-500">{history.length} sessions recorded</div>
+              </div>
+
+              {history.length > 0 ? (
+                <div className="space-y-4">
+                  {history.map((session, idx) => (
+                    <div key={idx} className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-lg">
+                      <div className="px-6 py-4 bg-gray-800/50 border-b border-gray-800 flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                          <HistoryIcon className="h-5 w-5 text-blue-500" />
+                          <span className="font-bold">{new Date(session.timestamp).toLocaleString()}</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="p-6">
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {session.fixtures.map((f, fIdx) => (
-                          <div key={fIdx} className="bg-gray-950 p-4 rounded-xl border border-gray-800">
-                            <div className="flex justify-between items-start mb-3">
-                              <span className="text-xs font-bold text-gray-500 uppercase">Fixture #{f.fixture_id}</span>
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                                f.status === "Alert Triggered" ? "bg-green-500/20 text-green-400" : "bg-blue-500/20 text-blue-400"
-                              }`}>
-                                {f.status}
-                              </span>
-                            </div>
-                            <div className="space-y-2 mb-4">
-                              {f.conditions.map((c, cIdx) => (
-                                <div key={cIdx} className="text-sm">
-                                  <span className="text-gray-400">{c.team}:</span> {c.stat} ≥ {c.target}
-                                </div>
-                              ))}
-                            </div>
-                            {f.alert_minute && (
-                              <div className="text-xs font-medium text-blue-400 flex items-center gap-1">
-                                <Clock className="h-3 w-3" /> Triggered at {f.alert_minute}\'
+                      <div className="p-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {session.fixtures.map((f, fIdx) => (
+                            <div key={fIdx} className="bg-gray-950 p-4 rounded-xl border border-gray-800">
+                              <div className="flex justify-between items-start mb-3">
+                                <span className="text-xs font-bold text-gray-500 uppercase">Fixture #{f.fixture_id}</span>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                  f.status === "Alert Triggered" ? "bg-green-500/20 text-green-400" : "bg-blue-500/20 text-blue-400"
+                                }`}>
+                                  {f.status}
+                                </span>
                               </div>
-                            )}
-                          </div>
-                        ))}
+                              <div className="space-y-2 mb-4">
+                                {f.conditions.map((c, cIdx) => (
+                                  <div key={cIdx} className="text-sm">
+                                    <span className="text-gray-400">{c.team}:</span> {c.stat} ≥ {c.target}
+                                  </div>
+                                ))}
+                              </div>
+                              {f.alert_minute && (
+                                <div className="text-xs font-medium text-blue-400 flex items-center gap-1">
+                                  <Clock className="h-3 w-3" /> Triggered at {f.alert_minute}\'
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="min-h-[400px] flex flex-col items-center justify-center text-gray-500 bg-gray-900/50 rounded-2xl border border-dashed border-gray-800">
-                <HistoryIcon className="h-12 w-12 mb-4 opacity-20" />
-                <p>No history sessions found</p>
-              </div>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <div className="min-h-[200px] flex flex-col items-center justify-center text-gray-500 bg-gray-900/50 rounded-2xl border border-dashed border-gray-800">
+                  <HistoryIcon className="h-12 w-12 mb-4 opacity-20" />
+                  <p>No history sessions found</p>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>

@@ -1,8 +1,10 @@
 import threading
 import time
 import json
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
+from datetime import datetime
 
 # Stdlib-based mock server (no external dependencies like Flask)
 # Mimics RapidAPI endpoint locally using only Python standard library
@@ -11,6 +13,10 @@ from urllib.parse import urlparse, parse_qs
 # This prevents oscillating values that could cause sync issues for multi-stat AND conditions
 # Simulates realistic match progression (stats only increase or stabilize)
 _fixture_progress = {}
+
+# Toast notifications storage
+_toast_notifications = []
+_toast_file = "toast_history.json"
 
 # Mock fixtures with real team names (6 matches)
 MOCK_FIXTURES = [
@@ -26,6 +32,48 @@ MOCK_FIXTURES = [
 def get_mock_fixtures():
     """Return the list of mock fixtures with real team names."""
     return list(MOCK_FIXTURES)
+
+
+def _load_toast_notifications():
+    """Load toast notifications from file."""
+    global _toast_notifications
+    if os.path.exists(_toast_file):
+        try:
+            with open(_toast_file, "r") as f:
+                _toast_notifications = json.load(f)
+        except Exception:
+            _toast_notifications = []
+    else:
+        _toast_notifications = []
+
+
+def _save_toast_notifications():
+    """Save toast notifications to file."""
+    try:
+        with open(_toast_file, "w") as f:
+            json.dump(_toast_notifications, f, indent=2)
+    except Exception as e:
+        print(f"Error saving toast notifications: {e}")
+
+
+def add_toast_notification(title, message, fixture_id=None, match_name=None):
+    """Add a new toast notification and save to file."""
+    global _toast_notifications
+    notification = {
+        "id": int(time.time() * 1000),  # Simple timestamp-based ID
+        "timestamp": datetime.now().isoformat(),
+        "title": title,
+        "message": message,
+        "fixture_id": fixture_id,
+        "match_name": match_name,
+        "type": "toast_notification"
+    }
+    _toast_notifications.append(notification)
+    # Keep only last 100 notifications to prevent file bloat
+    if len(_toast_notifications) > 100:
+        _toast_notifications = _toast_notifications[-100:]
+    _save_toast_notifications()
+    return notification
 
 
 def _get_fixture_teams(fixture_id):
@@ -148,6 +196,7 @@ class MockAPIHandler(BaseHTTPRequestHandler):
         """Handle GET requests to the mock endpoint.
         Now includes 'elapsed' minute in top-level response for match time tracking.
         Updated: /api/fixtures and /api/history for web dashboard.
+        Added: /api/toasts for toast notification history.
         """
         # Parse path for endpoint and query params
         parsed_path = urlparse(self.path)
@@ -174,7 +223,6 @@ class MockAPIHandler(BaseHTTPRequestHandler):
             self._set_headers()
             self.wfile.write(json.dumps(response_data).encode('utf-8'))
         elif path == '/api/history':
-            import os
             history_file = "history.json"
             if os.path.exists(history_file):
                 try:
@@ -191,6 +239,52 @@ class MockAPIHandler(BaseHTTPRequestHandler):
             }
             self._set_headers()
             self.wfile.write(json.dumps(response_data).encode('utf-8'))
+        elif path == '/api/toasts':
+            # Return toast notifications
+            _load_toast_notifications()
+            response_data = {
+                "results": len(_toast_notifications),
+                "response": _toast_notifications
+            }
+            self._set_headers()
+            self.wfile.write(json.dumps(response_data).encode('utf-8'))
+        else:
+            self.send_error(404, "Endpoint not found in mock server")
+
+    def do_POST(self):
+        """Handle POST requests for logging toast notifications."""
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        
+        if path == '/api/toasts':
+            # Read the request body
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            
+            try:
+                data = json.loads(post_data.decode('utf-8'))
+                title = data.get('title', 'Notification')
+                message = data.get('message', '')
+                fixture_id = data.get('fixture_id')
+                match_name = data.get('match_name')
+                
+                # Add the toast notification
+                notification = add_toast_notification(
+                    title=title,
+                    message=message,
+                    fixture_id=fixture_id,
+                    match_name=match_name
+                )
+                
+                self._set_headers()
+                response_data = {
+                    "success": True,
+                    "message": "Toast notification logged",
+                    "notification": notification
+                }
+                self.wfile.write(json.dumps(response_data).encode('utf-8'))
+            except Exception as e:
+                self.send_error(400, f"Invalid request data: {str(e)}")
         else:
             self.send_error(404, "Endpoint not found in mock server")
 
