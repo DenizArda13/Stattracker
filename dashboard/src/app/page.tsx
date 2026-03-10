@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { 
-  Trophy, 
-  Activity, 
-  History as HistoryIcon, 
-  Settings, 
+import { useEffect, useState, useCallback, useRef } from "react";
+import {
+  Trophy,
+  Activity,
+  History as HistoryIcon,
+  Settings,
   AlertCircle,
   ChevronRight,
   Clock,
   BarChart3,
-  Search
+  Search,
+  Bell,
+  BellRing
 } from "lucide-react";
 
 interface Fixture {
@@ -49,6 +51,46 @@ interface HistorySession {
   }>;
 }
 
+interface TrackedMatch {
+  fixtureId: number;
+  homeTeam: string;
+  awayTeam: string;
+  conditions: Array<{ stat: string; target: number; team: string }>;
+  notifiedConditions?: Set<string>; // Track which conditions have been notified
+}
+
+// Custom hook for browser notifications
+function useBrowserNotifications() {
+  const [permission, setPermission] = useState<NotificationPermission>("default");
+  const [isSupported, setIsSupported] = useState(true);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setIsSupported(false);
+      return;
+    }
+    setPermission(Notification.permission);
+  }, []);
+
+  const requestPermission = useCallback(async () => {
+    if (!isSupported) return false;
+    const result = await Notification.requestPermission();
+    setPermission(result);
+    return result === "granted";
+  }, [isSupported]);
+
+  const sendNotification = useCallback((title: string, options?: NotificationOptions) => {
+    if (!isSupported || permission !== "granted") return false;
+    new Notification(title, {
+      icon: "/favicon.ico",
+      ...options,
+    });
+    return true;
+  }, [isSupported, permission]);
+
+  return { permission, isSupported, requestPermission, sendNotification };
+}
+
 export default function Home() {
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [selectedFixtureId, setSelectedFixtureId] = useState<number | null>(null);
@@ -59,12 +101,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"live" | "history" | "track">("live");
 
   // Track Matches State
-  const [trackedMatches, setTrackedMatches] = useState<Array<{
-    fixtureId: number;
-    homeTeam: string;
-    awayTeam: string;
-    conditions: Array<{ stat: string; target: number; team: string }>;
-  }>>([]);
+  const [trackedMatches, setTrackedMatches] = useState<TrackedMatch[]>([]);
   const [newTrackForm, setNewTrackForm] = useState<{
     fixtureId: number | null;
     conditions: Array<{ stat: string; target: number | ""; team: string }>;
@@ -72,6 +109,10 @@ export default function Home() {
     fixtureId: null,
     conditions: [{ stat: "Corners", target: "", team: "Home" }]
   });
+
+  // Notification State
+  const { permission, isSupported, requestPermission, sendNotification } = useBrowserNotifications();
+  const notifiedConditionsRef = useRef<Set<string>>(new Set());
 
   const API_BASE = "http://localhost:5000";
 
@@ -97,6 +138,46 @@ export default function Home() {
     }, 2000);
     return () => clearInterval(interval);
   }, [fixtures]);
+
+  // Check for notification triggers when live data updates
+  useEffect(() => {
+    if (trackedMatches.length === 0 || Object.keys(allLiveData).length === 0) return;
+
+    trackedMatches.forEach((match) => {
+      const liveData = allLiveData[match.fixtureId];
+      if (!liveData || !liveData.response) return;
+
+      const homeStats = liveData.response[0];
+      const awayStats = liveData.response[1];
+      const elapsed = liveData.elapsed;
+
+      match.conditions.forEach((condition) => {
+        const conditionKey = `${match.fixtureId}-${condition.team}-${condition.stat}-${condition.target}`;
+
+        // Skip if already notified for this condition
+        if (notifiedConditionsRef.current.has(conditionKey)) return;
+
+        const teamStats = condition.team === "Home" ? homeStats : awayStats;
+        const statValue = teamStats.statistics.find((s: Stat) => s.type === condition.stat)?.value ?? 0;
+
+        if (statValue >= condition.target) {
+          // Condition met - send notification
+          const teamName = condition.team === "Home" ? match.homeTeam : match.awayTeam;
+          const title = `🚨 Stat Alert: ${teamName}`;
+          const body = `${condition.stat} reached ${statValue} (target: ${condition.target}) at ${elapsed}'\n${match.homeTeam} vs ${match.awayTeam}`;
+
+          sendNotification(title, {
+            body,
+            tag: conditionKey,
+            requireInteraction: false,
+          });
+
+          // Mark as notified
+          notifiedConditionsRef.current.add(conditionKey);
+        }
+      });
+    });
+  }, [allLiveData, trackedMatches, sendNotification]);
 
   // Fetch history periodically when on history tab
   useEffect(() => {
@@ -170,7 +251,7 @@ export default function Home() {
 
   const handleTrackMatch = () => {
     if (!newTrackForm.fixtureId) return;
-    
+
     // Validate conditions
     const validConditions = newTrackForm.conditions.filter(c => c.target !== "" && Number(c.target) >= 0);
     if (validConditions.length === 0) return;
@@ -178,21 +259,35 @@ export default function Home() {
     const fixture = fixtures.find(f => f.fixture_id === newTrackForm.fixtureId);
     if (!fixture) return;
 
-    setTrackedMatches([
-      ...trackedMatches,
-      {
-        fixtureId: fixture.fixture_id,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team,
-        conditions: validConditions as Array<{ stat: string; target: number; team: string }>
-      }
-    ]);
+    const newMatch: TrackedMatch = {
+      fixtureId: fixture.fixture_id,
+      homeTeam: fixture.home_team,
+      awayTeam: fixture.away_team,
+      conditions: validConditions as Array<{ stat: string; target: number; team: string }>,
+    };
+
+    setTrackedMatches([...trackedMatches, newMatch]);
 
     // Reset form
     setNewTrackForm({
       fixtureId: null,
       conditions: [{ stat: "Corners", target: "", team: "Home" }]
     });
+
+    // Request notification permission if not already granted
+    if (permission !== "granted") {
+      requestPermission();
+    }
+  };
+
+  const handleRemoveTrackedMatch = (index: number) => {
+    const match = trackedMatches[index];
+    // Clear notified conditions for this match
+    match.conditions.forEach((condition) => {
+      const conditionKey = `${match.fixtureId}-${condition.team}-${condition.stat}-${condition.target}`;
+      notifiedConditionsRef.current.delete(conditionKey);
+    });
+    setTrackedMatches(trackedMatches.filter((_, i) => i !== index));
   };
 
   if (loading) {
@@ -237,26 +332,63 @@ export default function Home() {
               Football Alert <span className="text-blue-500">Dashboard</span>
             </h1>
           </div>
-          <nav className="flex bg-gray-800 p-1 rounded-xl">
-            <button 
-              onClick={() => setActiveTab("live")}
-              className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${activeTab === "live" ? "bg-gray-700 text-white shadow-sm" : "text-gray-400 hover:text-gray-200"}`}
-            >
-              <Activity className="h-4 w-4" /> Live
-            </button>
-            <button 
-              onClick={() => setActiveTab("history")}
-              className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${activeTab === "history" ? "bg-gray-700 text-white shadow-sm" : "text-gray-400 hover:text-gray-200"}`}
-            >
-              <HistoryIcon className="h-4 w-4" /> History
-            </button>
-            <button 
-              onClick={() => setActiveTab("track")}
-              className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${activeTab === "track" ? "bg-gray-700 text-white shadow-sm" : "text-gray-400 hover:text-gray-200"}`}
-            >
-              <Settings className="h-4 w-4" /> Track
-            </button>
-          </nav>
+          <div className="flex items-center gap-4">
+            {/* Notification Bell */}
+            {isSupported && (
+              <button
+                onClick={requestPermission}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
+                  permission === "granted"
+                    ? "bg-green-600/20 text-green-400 hover:bg-green-600/30"
+                    : permission === "denied"
+                    ? "bg-red-600/20 text-red-400"
+                    : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white"
+                }`}
+                title={
+                  permission === "granted"
+                    ? "Notifications enabled"
+                    : permission === "denied"
+                    ? "Notifications blocked"
+                    : "Click to enable notifications"
+                }
+                disabled={permission === "denied"}
+              >
+                {permission === "granted" ? (
+                  <>
+                    <BellRing className="h-4 w-4" />
+                    <span className="text-sm font-medium hidden sm:inline">Notifications On</span>
+                  </>
+                ) : (
+                  <>
+                    <Bell className="h-4 w-4" />
+                    <span className="text-sm font-medium hidden sm:inline">
+                      {permission === "denied" ? "Blocked" : "Enable Alerts"}
+                    </span>
+                  </>
+                )}
+              </button>
+            )}
+            <nav className="flex bg-gray-800 p-1 rounded-xl">
+              <button
+                onClick={() => setActiveTab("live")}
+                className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${activeTab === "live" ? "bg-gray-700 text-white shadow-sm" : "text-gray-400 hover:text-gray-200"}`}
+              >
+                <Activity className="h-4 w-4" /> Live
+              </button>
+              <button
+                onClick={() => setActiveTab("history")}
+                className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${activeTab === "history" ? "bg-gray-700 text-white shadow-sm" : "text-gray-400 hover:text-gray-200"}`}
+              >
+                <HistoryIcon className="h-4 w-4" /> History
+              </button>
+              <button
+                onClick={() => setActiveTab("track")}
+                className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${activeTab === "track" ? "bg-gray-700 text-white shadow-sm" : "text-gray-400 hover:text-gray-200"}`}
+              >
+                <Settings className="h-4 w-4" /> Track
+              </button>
+            </nav>
+          </div>
         </div>
       </header>
 
@@ -350,16 +482,60 @@ export default function Home() {
               <div className="space-y-4">
                 <h3 className="text-xl font-bold">Currently Tracking</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {trackedMatches.map((match, idx) => (
-                    <div key={idx} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                      <div className="font-bold mb-2">{match.homeTeam} vs {match.awayTeam}</div>
-                      <div className="space-y-1 text-sm text-gray-400">
-                        {match.conditions.map((c, cIdx) => (
-                          <div key={cIdx}>• {c.team} {c.stat} ≥ {c.target}</div>
-                        ))}
+                  {trackedMatches.map((match, idx) => {
+                    const liveData = allLiveData[match.fixtureId];
+                    const homeStats = liveData?.response?.[0];
+                    const awayStats = liveData?.response?.[1];
+
+                    return (
+                      <div key={idx} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="font-bold">{match.homeTeam} vs {match.awayTeam}</div>
+                          <button
+                            onClick={() => handleRemoveTrackedMatch(idx)}
+                            className="p-1 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded text-xs"
+                            title="Stop tracking"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <div className="space-y-2 text-sm">
+                          {match.conditions.map((c, cIdx) => {
+                            const teamStats = c.team === "Home" ? homeStats : awayStats;
+                            const currentValue = teamStats?.statistics.find((s: Stat) => s.type === c.stat)?.value ?? 0;
+                            const isMet = currentValue >= c.target;
+                            const conditionKey = `${match.fixtureId}-${c.team}-${c.stat}-${c.target}`;
+                            const wasNotified = notifiedConditionsRef.current.has(conditionKey);
+
+                            return (
+                              <div
+                                key={cIdx}
+                                className={`flex items-center justify-between p-2 rounded ${
+                                  isMet
+                                    ? wasNotified
+                                      ? "bg-green-600/20 border border-green-600/30"
+                                      : "bg-yellow-600/20 border border-yellow-600/30"
+                                    : "bg-gray-800"
+                                }`}
+                              >
+                                <span className={isMet ? "text-white" : "text-gray-400"}>
+                                  {c.team} {c.stat} ≥ {c.target}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className={`font-mono ${isMet ? "text-green-400 font-bold" : "text-gray-500"}`}>
+                                    {currentValue}
+                                  </span>
+                                  {wasNotified && (
+                                    <BellRing className="h-3 w-3 text-green-400" />
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
