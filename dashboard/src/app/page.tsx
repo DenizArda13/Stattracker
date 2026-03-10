@@ -12,8 +12,17 @@ import {
   BarChart3,
   Search,
   Bell,
-  BellRing
+  BellRing,
+  X,
+  CheckCircle2
 } from "lucide-react";
+
+interface Toast {
+  id: string;
+  title: string;
+  message: string;
+  type: "success" | "info" | "warning";
+}
 
 interface Fixture {
   fixture_id: number;
@@ -113,6 +122,19 @@ export default function Home() {
   // Notification State
   const { permission, isSupported, requestPermission, sendNotification } = useBrowserNotifications();
   const notifiedConditionsRef = useRef<Set<string>>(new Set());
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const addToast = useCallback((title: string, message: string, type: "success" | "info" | "warning" = "info") => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, title, message, type }]);
+    setTimeout(() => {
+      removeToast(id);
+    }, 5000);
+  }, [removeToast]);
 
   const API_BASE = "http://localhost:5000";
 
@@ -151,6 +173,42 @@ export default function Home() {
       const awayStats = liveData.response[1];
       const elapsed = liveData.elapsed;
 
+      // Track how many conditions are met for THIS match
+      let metConditionsCount = 0;
+      const conditionDetails: string[] = [];
+
+      match.conditions.forEach((condition) => {
+        const teamStats = condition.team === "Home" ? homeStats : awayStats;
+        const statValue = teamStats.statistics.find((s: Stat) => s.type === condition.stat)?.value ?? 0;
+
+        if (statValue >= condition.target) {
+          metConditionsCount++;
+          conditionDetails.push(`${condition.team} ${condition.stat}: ${statValue}`);
+        }
+      });
+
+      // If ALL conditions are met for this match
+      if (metConditionsCount === match.conditions.length && metConditionsCount > 0) {
+        const matchKey = `match-${match.fixtureId}-all-met`;
+
+        // Only notify once for "all met" state per match
+        if (!notifiedConditionsRef.current.has(matchKey)) {
+          const title = `🏆 Match Alert: All Conditions Met!`;
+          const message = `${match.homeTeam} vs ${match.awayTeam}\n${conditionDetails.join(", ")} at ${elapsed}'`;
+
+          // Send browser notification
+          sendNotification(title, { body: message, tag: matchKey });
+
+          // Show in-app toast
+          addToast(title, message, "success");
+
+          // Mark as notified
+          notifiedConditionsRef.current.add(matchKey);
+        }
+      }
+
+      // Also keep individual condition background notifications if needed, 
+      // but the user specifically asked for "all conditions met" toast.
       match.conditions.forEach((condition) => {
         const conditionKey = `${match.fixtureId}-${condition.team}-${condition.stat}-${condition.target}`;
 
@@ -161,10 +219,10 @@ export default function Home() {
         const statValue = teamStats.statistics.find((s: Stat) => s.type === condition.stat)?.value ?? 0;
 
         if (statValue >= condition.target) {
-          // Condition met - send notification
+          // Condition met - send browser notification (silent, no toast here as per request for "all conditions")
           const teamName = condition.team === "Home" ? match.homeTeam : match.awayTeam;
           const title = `🚨 Stat Alert: ${teamName}`;
-          const body = `${condition.stat} reached ${statValue} (target: ${condition.target}) at ${elapsed}'\n${match.homeTeam} vs ${match.awayTeam}`;
+          const body = `${condition.stat} reached ${statValue} (target: ${condition.target}) at ${elapsed}'`;
 
           sendNotification(title, {
             body,
@@ -177,7 +235,7 @@ export default function Home() {
         }
       });
     });
-  }, [allLiveData, trackedMatches, sendNotification]);
+  }, [allLiveData, trackedMatches, sendNotification, addToast]);
 
   // Fetch history periodically when on history tab
   useEffect(() => {
@@ -487,10 +545,24 @@ export default function Home() {
                     const homeStats = liveData?.response?.[0];
                     const awayStats = liveData?.response?.[1];
 
+                    // Check if all conditions met
+                    const allMet = match.conditions.every((c) => {
+                      const teamStats = c.team === "Home" ? homeStats : awayStats;
+                      const currentValue = teamStats?.statistics.find((s: Stat) => s.type === c.stat)?.value ?? 0;
+                      return currentValue >= c.target;
+                    }) && match.conditions.length > 0;
+
                     return (
-                      <div key={idx} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                      <div key={idx} className={`bg-gray-900 border rounded-xl p-4 transition-all ${allMet ? "border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]" : "border-gray-800"}`}>
                         <div className="flex justify-between items-start mb-2">
-                          <div className="font-bold">{match.homeTeam} vs {match.awayTeam}</div>
+                          <div className="flex flex-col">
+                            <div className="font-bold">{match.homeTeam} vs {match.awayTeam}</div>
+                            {allMet && (
+                              <div className="flex items-center gap-1 text-[10px] font-bold text-green-400 uppercase mt-1">
+                                <Trophy className="h-3 w-3" /> All Conditions Met
+                              </div>
+                            )}
+                          </div>
                           <button
                             onClick={() => handleRemoveTrackedMatch(idx)}
                             className="p-1 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded text-xs"
@@ -724,6 +796,42 @@ export default function Home() {
       <footer className="max-w-7xl mx-auto p-6 text-center text-gray-600 text-sm border-t border-gray-900 mt-12">
         Football Alert CLI &copy; 2026 - Modern Local Dashboard
       </footer>
+
+      {/* Toast Notifications Container */}
+      <div className="fixed top-6 right-6 z-50 flex flex-col gap-3 w-80">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`flex items-start gap-3 p-4 rounded-xl border shadow-2xl animate-in slide-in-from-right duration-300 ${
+              toast.type === "success"
+                ? "bg-green-900/90 border-green-500 text-white"
+                : toast.type === "warning"
+                ? "bg-yellow-900/90 border-yellow-500 text-white"
+                : "bg-blue-900/90 border-blue-500 text-white"
+            }`}
+          >
+            <div className="mt-0.5">
+              {toast.type === "success" ? (
+                <CheckCircle2 className="h-5 w-5 text-green-400" />
+              ) : toast.type === "warning" ? (
+                <AlertCircle className="h-5 w-5 text-yellow-400" />
+              ) : (
+                <BellRing className="h-5 w-5 text-blue-400" />
+              )}
+            </div>
+            <div className="flex-1">
+              <div className="font-bold text-sm mb-0.5">{toast.title}</div>
+              <div className="text-xs opacity-90 whitespace-pre-line">{toast.message}</div>
+            </div>
+            <button
+              onClick={() => removeToast(toast.id)}
+              className="mt-0.5 hover:opacity-70 transition-opacity"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
