@@ -15,7 +15,8 @@ import {
   BellRing,
   X,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Trash2
 } from "lucide-react";
 
 interface Toast {
@@ -168,6 +169,23 @@ export default function Home() {
       console.error("Failed to log toast to server:", err);
     }
   }, [fetchToastHistory]);
+
+  // Delete toast notification from server
+  const deleteToastNotification = useCallback(async (notificationId: number) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/toasts/${notificationId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete notification");
+      // Refresh toast history after deletion
+      fetchToastHistory();
+      // Show success toast
+      addToast("Notification Deleted", "The notification has been removed from history.", "info");
+    } catch (err) {
+      console.error("Failed to delete notification:", err);
+      addToast("Error", "Failed to delete notification. Please try again.", "error");
+    }
+  }, [fetchToastHistory, addToast]);
 
   useEffect(() => {
     fetchFixtures();
@@ -823,9 +841,22 @@ export default function Home() {
                             {isError ? "Conditions Not Met!" : "All Conditions Met!"}
                           </span>
                         </div>
-                        <span className="text-xs text-gray-400">
-                          {new Date(toast.timestamp).toLocaleString()}
-                        </span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-gray-400">
+                            {new Date(toast.timestamp).toLocaleString()}
+                          </span>
+                          <button
+                            onClick={() => deleteToastNotification(toast.id)}
+                            className={`p-1.5 rounded-lg transition-all ${
+                              isError
+                                ? "hover:bg-red-600/30 text-red-400"
+                                : "hover:bg-green-600/30 text-green-400"
+                            }`}
+                            title="Delete notification"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
                       <div className="p-6">
                         <div className="font-bold text-lg mb-2">{toast.match_name}</div>

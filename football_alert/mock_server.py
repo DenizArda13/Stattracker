@@ -76,6 +76,18 @@ def add_toast_notification(title, message, fixture_id=None, match_name=None):
     return notification
 
 
+def delete_toast_notification(notification_id):
+    """Delete a toast notification by ID and save to file."""
+    global _toast_notifications
+    _load_toast_notifications()
+    original_length = len(_toast_notifications)
+    _toast_notifications = [n for n in _toast_notifications if n["id"] != notification_id]
+    deleted = len(_toast_notifications) < original_length
+    if deleted:
+        _save_toast_notifications()
+    return deleted
+
+
 def _get_fixture_teams(fixture_id):
     """Resolve fixture team names from the mock fixture list."""
     fixture_id = str(fixture_id)
@@ -180,7 +192,7 @@ class MockAPIHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
 
@@ -188,7 +200,7 @@ class MockAPIHandler(BaseHTTPRequestHandler):
         """Handle CORS preflight requests."""
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
 
@@ -285,6 +297,31 @@ class MockAPIHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps(response_data).encode('utf-8'))
             except Exception as e:
                 self.send_error(400, f"Invalid request data: {str(e)}")
+        else:
+            self.send_error(404, "Endpoint not found in mock server")
+
+    def do_DELETE(self):
+        """Handle DELETE requests for removing toast notifications."""
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        
+        if path.startswith('/api/toasts/'):
+            # Extract notification ID from path: /api/toasts/{id}
+            try:
+                notification_id = int(path.split('/')[-1])
+                deleted = delete_toast_notification(notification_id)
+                
+                if deleted:
+                    self._set_headers()
+                    response_data = {
+                        "success": True,
+                        "message": "Notification deleted successfully"
+                    }
+                    self.wfile.write(json.dumps(response_data).encode('utf-8'))
+                else:
+                    self.send_error(404, "Notification not found")
+            except (ValueError, IndexError):
+                self.send_error(400, "Invalid notification ID")
         else:
             self.send_error(404, "Endpoint not found in mock server")
 
