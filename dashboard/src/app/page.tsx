@@ -14,14 +14,15 @@ import {
   Bell,
   BellRing,
   X,
-  CheckCircle2
+  CheckCircle2,
+  XCircle
 } from "lucide-react";
 
 interface Toast {
   id: string;
   title: string;
   message: string;
-  type: "success" | "info" | "warning";
+  type: "success" | "info" | "warning" | "error";
 }
 
 interface Fixture {
@@ -123,7 +124,7 @@ export default function Home() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const addToast = useCallback((title: string, message: string, type: "success" | "info" | "warning" = "info") => {
+  const addToast = useCallback((title: string, message: string, type: "success" | "info" | "warning" | "error" = "info") => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, title, message, type }]);
     setTimeout(() => {
@@ -236,6 +237,40 @@ export default function Home() {
 
           // Mark as notified
           notifiedConditionsRef.current.add(matchKey);
+        }
+      }
+
+      // Check if AT LEAST ONE condition is NOT met (for error notification)
+      const unmetConditions: string[] = [];
+      match.conditions.forEach((condition) => {
+        const teamStats = condition.team === "Home" ? homeStats : awayStats;
+        const statValue = teamStats.statistics.find((s: Stat) => s.type === condition.stat)?.value ?? 0;
+
+        if (statValue < condition.target) {
+          unmetConditions.push(`${condition.team} ${condition.stat}: ${statValue} (target: ${condition.target})`);
+        }
+      });
+
+      // If at least one condition is NOT met, send error notification
+      if (unmetConditions.length > 0) {
+        const unmetKey = `match-${match.fixtureId}-unmet`;
+
+        // Only notify once for "conditions not met" state per match
+        if (!notifiedConditionsRef.current.has(unmetKey)) {
+          const title = `⚠️ Match Alert: Conditions Not Met`;
+          const message = `${match.homeTeam} vs ${match.awayTeam}\n${unmetConditions.join(", ")} at ${elapsed}'`;
+
+          // Send browser notification
+          sendNotification(title, { body: message, tag: unmetKey });
+
+          // Show in-app toast with error type (red color)
+          addToast(title, message, "error");
+
+          // Log to server for history
+          logToastToServer(title, message, match.fixtureId, `${match.homeTeam} vs ${match.awayTeam}`);
+
+          // Mark as notified
+          notifiedConditionsRef.current.add(unmetKey);
         }
       }
 
@@ -760,7 +795,7 @@ export default function Home() {
           <div className="space-y-6">
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold flex items-center gap-2">
-                <BellRing className="h-6 w-6 text-green-500" />
+                <BellRing className="h-6 w-6 text-blue-500" />
                 Notification History
               </h2>
               <div className="text-sm text-gray-500">{toastHistory.length} alerts recorded</div>
@@ -768,34 +803,48 @@ export default function Home() {
 
             {toastHistory.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {toastHistory.slice().reverse().map((toast) => (
-                  <div key={toast.id} className="bg-gray-900 border border-green-500/30 rounded-2xl overflow-hidden shadow-lg">
-                    <div className="px-6 py-4 bg-green-900/20 border-b border-green-500/30 flex justify-between items-center">
-                      <div className="flex items-center gap-3">
-                        <CheckCircle2 className="h-5 w-5 text-green-500" />
-                        <span className="font-bold text-green-400">All Conditions Met!</span>
-                      </div>
-                      <span className="text-xs text-gray-400">
-                        {new Date(toast.timestamp).toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="p-6">
-                      <div className="font-bold text-lg mb-2">{toast.match_name}</div>
-                      <div className="text-sm text-gray-400 whitespace-pre-line">{toast.message}</div>
-                      {toast.fixture_id && (
-                        <div className="mt-4 text-xs text-gray-500">
-                          Fixture #{toast.fixture_id}
+                {toastHistory.slice().reverse().map((toast) => {
+                  // Determine if this is an error notification (conditions not met)
+                  const isError = toast.title.includes("Not Met") || toast.message.includes("Not Met");
+                  return (
+                    <div key={toast.id} className={`bg-gray-900 border rounded-2xl overflow-hidden shadow-lg ${
+                      isError ? "border-red-500/30" : "border-green-500/30"
+                    }`}>
+                      <div className={`px-6 py-4 border-b flex justify-between items-center ${
+                        isError ? "bg-red-900/20 border-red-500/30" : "bg-green-900/20 border-green-500/30"
+                      }`}>
+                        <div className="flex items-center gap-3">
+                          {isError ? (
+                            <XCircle className="h-5 w-5 text-red-500" />
+                          ) : (
+                            <CheckCircle2 className="h-5 w-5 text-green-500" />
+                          )}
+                          <span className={`font-bold ${isError ? "text-red-400" : "text-green-400"}`}>
+                            {isError ? "Conditions Not Met!" : "All Conditions Met!"}
+                          </span>
                         </div>
-                      )}
+                        <span className="text-xs text-gray-400">
+                          {new Date(toast.timestamp).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="p-6">
+                        <div className="font-bold text-lg mb-2">{toast.match_name}</div>
+                        <div className="text-sm text-gray-400 whitespace-pre-line">{toast.message}</div>
+                        {toast.fixture_id && (
+                          <div className="mt-4 text-xs text-gray-500">
+                            Fixture #{toast.fixture_id}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="min-h-[400px] flex flex-col items-center justify-center text-gray-500 bg-gray-900/50 rounded-2xl border border-dashed border-gray-800">
                 <BellRing className="h-12 w-12 mb-4 opacity-20" />
                 <p>No notifications yet</p>
-                <p className="text-sm text-gray-600 mt-1">Track a match and wait for all conditions to be met!</p>
+                <p className="text-sm text-gray-600 mt-1">Track a match and wait for conditions to be checked!</p>
               </div>
             )}
           </div>
@@ -816,6 +865,8 @@ export default function Home() {
                 ? "bg-green-900/90 border-green-500 text-white"
                 : toast.type === "warning"
                 ? "bg-yellow-900/90 border-yellow-500 text-white"
+                : toast.type === "error"
+                ? "bg-red-900/90 border-red-500 text-white"
                 : "bg-blue-900/90 border-blue-500 text-white"
             }`}
           >
@@ -824,6 +875,8 @@ export default function Home() {
                 <CheckCircle2 className="h-5 w-5 text-green-400" />
               ) : toast.type === "warning" ? (
                 <AlertCircle className="h-5 w-5 text-yellow-400" />
+              ) : toast.type === "error" ? (
+                <XCircle className="h-5 w-5 text-red-400" />
               ) : (
                 <BellRing className="h-5 w-5 text-blue-400" />
               )}
