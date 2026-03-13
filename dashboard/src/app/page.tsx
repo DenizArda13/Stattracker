@@ -138,19 +138,19 @@ export default function Home() {
   // Fetch toast history - defined early for use in useEffect
   const fetchToastHistory = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/toasts`);
-      if (!res.ok) throw new Error("Failed to fetch toast history");
+      const res = await fetch(`${API_BASE}/api/history`);
+      if (!res.ok) throw new Error("Failed to fetch history");
       const data = await res.json();
       setToastHistory(data.response);
     } catch (err) {
-      console.error("Failed to fetch toast history:", err);
+      console.error("Failed to fetch history:", err);
     }
   }, []);
 
-  // Log toast to server - defined early for use in useEffect
+  // Log history notification to server - defined early for use in useEffect
   const logToastToServer = useCallback(async (title: string, message: string, fixtureId?: number, matchName?: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/toasts`, {
+      const res = await fetch(`${API_BASE}/api/history`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -162,22 +162,22 @@ export default function Home() {
           match_name: matchName,
         }),
       });
-      if (!res.ok) throw new Error("Failed to log toast");
-      // Refresh toast history after logging
+      if (!res.ok) throw new Error("Failed to log history");
+      // Refresh history after logging
       fetchToastHistory();
     } catch (err) {
-      console.error("Failed to log toast to server:", err);
+      console.error("Failed to log history to server:", err);
     }
   }, [fetchToastHistory]);
 
-  // Delete toast notification from server
+  // Delete history notification from server
   const deleteToastNotification = useCallback(async (notificationId: number) => {
     try {
-      const res = await fetch(`${API_BASE}/api/toasts/${notificationId}`, {
+      const res = await fetch(`${API_BASE}/api/history/${notificationId}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to delete notification");
-      // Refresh toast history after deletion
+      // Refresh history after deletion
       fetchToastHistory();
       // Show success toast
       addToast("Notification Deleted", "The notification has been removed from history.", "info");

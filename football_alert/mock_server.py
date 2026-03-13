@@ -14,9 +14,9 @@ from datetime import datetime
 # Simulates realistic match progression (stats only increase or stabilize)
 _fixture_progress = {}
 
-# Toast notifications storage
-_toast_notifications = []
-_toast_file = "toast_history.json"
+# Notification history storage (single source of truth)
+_history_notifications = []
+_history_file = "toast_history.json"
 
 # Mock fixtures with real team names (6 matches)
 MOCK_FIXTURES = [
@@ -34,31 +34,31 @@ def get_mock_fixtures():
     return list(MOCK_FIXTURES)
 
 
-def _load_toast_notifications():
-    """Load toast notifications from file."""
-    global _toast_notifications
-    if os.path.exists(_toast_file):
+def _load_history_notifications():
+    """Load notification history from file."""
+    global _history_notifications
+    if os.path.exists(_history_file):
         try:
-            with open(_toast_file, "r") as f:
-                _toast_notifications = json.load(f)
+            with open(_history_file, "r") as f:
+                _history_notifications = json.load(f)
         except Exception:
-            _toast_notifications = []
+            _history_notifications = []
     else:
-        _toast_notifications = []
+        _history_notifications = []
 
 
-def _save_toast_notifications():
-    """Save toast notifications to file."""
+def _save_history_notifications():
+    """Save notification history to file."""
     try:
-        with open(_toast_file, "w") as f:
-            json.dump(_toast_notifications, f, indent=2)
+        with open(_history_file, "w") as f:
+            json.dump(_history_notifications, f, indent=2)
     except Exception as e:
-        print(f"Error saving toast notifications: {e}")
+        print(f"Error saving notification history: {e}")
 
 
-def add_toast_notification(title, message, fixture_id=None, match_name=None):
-    """Add a new toast notification and save to file."""
-    global _toast_notifications
+def add_history_notification(title, message, fixture_id=None, match_name=None):
+    """Add a new notification to history and save to file."""
+    global _history_notifications
     notification = {
         "id": int(time.time() * 1000),  # Simple timestamp-based ID
         "timestamp": datetime.now().isoformat(),
@@ -68,23 +68,23 @@ def add_toast_notification(title, message, fixture_id=None, match_name=None):
         "match_name": match_name,
         "type": "toast_notification"
     }
-    _toast_notifications.append(notification)
+    _history_notifications.append(notification)
     # Keep only last 100 notifications to prevent file bloat
-    if len(_toast_notifications) > 100:
-        _toast_notifications = _toast_notifications[-100:]
-    _save_toast_notifications()
+    if len(_history_notifications) > 100:
+        _history_notifications = _history_notifications[-100:]
+    _save_history_notifications()
     return notification
 
 
-def delete_toast_notification(notification_id):
-    """Delete a toast notification by ID and save to file."""
-    global _toast_notifications
-    _load_toast_notifications()
-    original_length = len(_toast_notifications)
-    _toast_notifications = [n for n in _toast_notifications if n["id"] != notification_id]
-    deleted = len(_toast_notifications) < original_length
+def delete_history_notification(notification_id):
+    """Delete a notification from history by ID and save to file."""
+    global _history_notifications
+    _load_history_notifications()
+    original_length = len(_history_notifications)
+    _history_notifications = [n for n in _history_notifications if n["id"] != notification_id]
+    deleted = len(_history_notifications) < original_length
     if deleted:
-        _save_toast_notifications()
+        _save_history_notifications()
     return deleted
 
 
@@ -208,7 +208,7 @@ class MockAPIHandler(BaseHTTPRequestHandler):
         """Handle GET requests to the mock endpoint.
         Now includes 'elapsed' minute in top-level response for match time tracking.
         Updated: /api/fixtures and /api/history for web dashboard.
-        Added: /api/toasts for toast notification history.
+        Updated: /api/history as the unified notification history endpoint.
         """
         # Parse path for endpoint and query params
         parsed_path = urlparse(self.path)
@@ -235,28 +235,11 @@ class MockAPIHandler(BaseHTTPRequestHandler):
             self._set_headers()
             self.wfile.write(json.dumps(response_data).encode('utf-8'))
         elif path == '/api/history':
-            history_file = "history.json"
-            if os.path.exists(history_file):
-                try:
-                    with open(history_file, "r") as f:
-                        history = json.load(f)
-                except Exception:
-                    history = []
-            else:
-                history = []
-            
+            # Unified history endpoint
+            _load_history_notifications()
             response_data = {
-                "results": len(history),
-                "response": history
-            }
-            self._set_headers()
-            self.wfile.write(json.dumps(response_data).encode('utf-8'))
-        elif path == '/api/toasts':
-            # Return toast notifications
-            _load_toast_notifications()
-            response_data = {
-                "results": len(_toast_notifications),
-                "response": _toast_notifications
+                "results": len(_history_notifications),
+                "response": _history_notifications
             }
             self._set_headers()
             self.wfile.write(json.dumps(response_data).encode('utf-8'))
@@ -264,11 +247,11 @@ class MockAPIHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Endpoint not found in mock server")
 
     def do_POST(self):
-        """Handle POST requests for logging toast notifications."""
+        """Handle POST requests for logging history notifications."""
         parsed_path = urlparse(self.path)
         path = parsed_path.path
         
-        if path == '/api/toasts':
+        if path == '/api/history':
             # Read the request body
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length)
@@ -280,8 +263,8 @@ class MockAPIHandler(BaseHTTPRequestHandler):
                 fixture_id = data.get('fixture_id')
                 match_name = data.get('match_name')
                 
-                # Add the toast notification
-                notification = add_toast_notification(
+                # Add the history notification
+                notification = add_history_notification(
                     title=title,
                     message=message,
                     fixture_id=fixture_id,
@@ -291,7 +274,7 @@ class MockAPIHandler(BaseHTTPRequestHandler):
                 self._set_headers()
                 response_data = {
                     "success": True,
-                    "message": "Toast notification logged",
+                    "message": "History notification logged",
                     "notification": notification
                 }
                 self.wfile.write(json.dumps(response_data).encode('utf-8'))
@@ -301,15 +284,15 @@ class MockAPIHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Endpoint not found in mock server")
 
     def do_DELETE(self):
-        """Handle DELETE requests for removing toast notifications."""
+        """Handle DELETE requests for removing history notifications."""
         parsed_path = urlparse(self.path)
         path = parsed_path.path
         
-        if path.startswith('/api/toasts/'):
-            # Extract notification ID from path: /api/toasts/{id}
+        if path.startswith('/api/history/'):
+            # Extract notification ID from path: /api/history/{id}
             try:
                 notification_id = int(path.split('/')[-1])
-                deleted = delete_toast_notification(notification_id)
+                deleted = delete_history_notification(notification_id)
                 
                 if deleted:
                     self._set_headers()
