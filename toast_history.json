@@ -1,29 +1,47 @@
 [
   {
-    "id": 1773396528745,
-    "timestamp": "2026-03-13T10:08:48.745593",
+    "id": 1773398519377,
+    "timestamp": "2026-03-13T10:41:59.377203",
+    "title": "\ud83c\udfc6 Match Alert: All Conditions Met!",
+    "message": "Manchester City vs Liverpool\nHome Corners: 15, Away Goals: 3 at 65'",
+    "fixture_id": 1001,
+    "match_name": "Manchester City vs Liverpool",
+    "type": "toast_notification"
+  },
+  {
+    "id": 1773398529061,
+    "timestamp": "2026-03-13T10:42:09.061423",
     "title": "\u26a0\ufe0f Match Alert: Conditions Not Met",
-    "message": "Manchester City vs Liverpool\nHome Goals: 4 (target: 5), Away Corners: 12 (target: 15) at 60'",
+    "message": "Real Madrid vs Barcelona\nHome Goals: 5 (target: 10), Away Corners: 16 (target: 50) at 90'",
+    "fixture_id": 1002,
+    "match_name": "Real Madrid vs Barcelona",
+    "type": "toast_notification"
+  },
+  {
+    "id": 1773398589091,
+    "timestamp": "2026-03-13T10:43:09.091896",
+    "title": "\u26a0\ufe0f Match Alert: Conditions Not Met",
+    "message": "Manchester City vs Liverpool\nHome Goals: 5 (target: 6) at 90'",
     "fixture_id": 1001,
     "match_name": "Manchester City vs Liverpool",
     "type": "toast_notification"
   },
   {
-    "id": 1773396531281,
-    "timestamp": "2026-03-13T10:08:51.281827",
-    "title": "\ud83c\udfc6 Match Alert: All Conditions Met!",
-    "message": "Manchester City vs Liverpool\nHome Goals: 5, Away Corners: 15 at 80'",
-    "fixture_id": 1001,
-    "match_name": "Manchester City vs Liverpool",
+    "id": 1773398589095,
+    "timestamp": "2026-03-13T10:43:09.095328",
+    "title": "\u26a0\ufe0f Match Alert: Conditions Not Met",
+    "message": "Real Madrid vs Barcelona\nAway Corners: 16 (target: 20) at 90'",
+    "fixture_id": 1002,
+    "match_name": "Real Madrid vs Barcelona",
     "type": "toast_notification"
   },
   {
-    "id": 1773396568180,
-    "timestamp": "2026-03-13T10:09:28.180390",
+    "id": 1773398610144,
+    "timestamp": "2026-03-13T10:43:30.144320",
     "title": "\ud83c\udfc6 Match Alert: All Conditions Met!",
-    "message": "Manchester City vs Liverpool\nHome Goals: 5, Away Corners: 14 at 70'",
-    "fixture_id": 1001,
-    "match_name": "Manchester City vs Liverpool",
+    "message": "Bayern Munich vs Borussia Dortmund\nHome Goals: 5, Away Corners: 17 at 90'",
+    "fixture_id": 1003,
+    "match_name": "Bayern Munich vs Borussia Dortmund",
     "type": "toast_notification"
   }
 ]

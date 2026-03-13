@@ -269,8 +269,8 @@ export default function Home() {
         }
       });
 
-      // If at least one condition is NOT met, send error notification
-      if (unmetConditions.length > 0) {
+      // If at least one condition is NOT met, send error notification ONLY at full time
+      if (unmetConditions.length > 0 && elapsed >= 90) {
         const unmetKey = `match-${match.fixtureId}-unmet`;
 
         // Only notify once for "conditions not met" state per match
