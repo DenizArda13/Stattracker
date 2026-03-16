@@ -16,7 +16,8 @@ import {
   X,
   CheckCircle2,
   XCircle,
-  Trash2
+  Trash2,
+  Filter
 } from "lucide-react";
 
 interface Toast {
@@ -104,6 +105,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"live" | "history" | "track">("live");
+  const [historyFilter, setHistoryFilter] = useState<"all" | "met" | "unmet">("all");
 
   // Track Matches State
   const [trackedMatches, setTrackedMatches] = useState<TrackedMatch[]>([]);
@@ -187,6 +189,28 @@ export default function Home() {
     }
   }, [fetchToastHistory, addToast]);
 
+  // Clear all history notifications from server (respects current filter)
+  const clearAllToastNotifications = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/history?filter=${historyFilter}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to clear all notifications");
+      // Refresh history after clearing
+      fetchToastHistory();
+      // Show success toast based on filter
+      const filterMessages: Record<string, string> = {
+        all: "All notifications have been removed from history.",
+        met: "All 'Conditions Met' notifications have been removed from history.",
+        unmet: "All 'Conditions Not Met' notifications have been removed from history.",
+      };
+      addToast("History Cleared", filterMessages[historyFilter] || "Notifications have been removed from history.", "success");
+    } catch (err) {
+      console.error("Failed to clear all notifications:", err);
+      addToast("Error", "Failed to clear all notifications. Please try again.", "error");
+    }
+  }, [fetchToastHistory, addToast, historyFilter]);
+
   useEffect(() => {
     fetchFixtures();
   }, []);
@@ -231,7 +255,8 @@ export default function Home() {
 
         if (statValue >= condition.target) {
           metConditionsCount++;
-          conditionDetails.push(`${condition.team} ${condition.stat}: ${statValue}`);
+          // Use target value (snapshot) instead of live value to preserve state at notification time
+          conditionDetails.push(`${condition.team} ${condition.stat}: ${condition.target}`);
         }
       });
 
@@ -307,7 +332,8 @@ export default function Home() {
           // Condition met - send browser notification (silent, no toast here as per request for "all conditions")
           const teamName = condition.team === "Home" ? match.homeTeam : match.awayTeam;
           const title = `🚨 Stat Alert: ${teamName}`;
-          const body = `${condition.stat} reached ${statValue} (target: ${condition.target}) at ${elapsed}'`;
+          // Use target value (snapshot) instead of live value to preserve state at notification time
+          const body = `${condition.stat} reached target: ${condition.target} at ${elapsed}'`;
 
           sendNotification(title, {
             body,
@@ -331,7 +357,7 @@ export default function Home() {
       }, 2000);
       return () => clearInterval(interval);
     }
-  }, [activeTab]);
+  }, [activeTab, fetchToastHistory]);
 
   const fetchFixtures = async () => {
     try {
@@ -816,12 +842,40 @@ export default function Home() {
                 <BellRing className="h-6 w-6 text-blue-500" />
                 Notification History
               </h2>
-              <div className="text-sm text-gray-500">{toastHistory.length} alerts recorded</div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-gray-400" />
+                  <select
+                    value={historyFilter}
+                    onChange={(e) => setHistoryFilter(e.target.value as "all" | "met" | "unmet")}
+                    className="bg-gray-800 border border-gray-700 rounded-lg p-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="all">All Notifications</option>
+                    <option value="met">Conditions Met</option>
+                    <option value="unmet">Conditions Not Met</option>
+                  </select>
+                </div>
+                <div className="text-sm text-gray-500">{toastHistory.length} alerts recorded</div>
+                {toastHistory.length > 0 && (
+                  <button
+                    onClick={clearAllToastNotifications}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-all"
+                    title="Clear all notifications"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Clear All
+                  </button>
+                )}
+              </div>
             </div>
 
             {toastHistory.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {toastHistory.slice().reverse().map((toast) => {
+                {toastHistory.slice().reverse().filter(toast => {
+                  if (historyFilter === "all") return true;
+                  const isError = toast.title.includes("Not Met") || toast.message.includes("Not Met");
+                  return historyFilter === "unmet" ? isError : !isError;
+                }).map((toast) => {
                   // Determine if this is an error notification (conditions not met)
                   const isError = toast.title.includes("Not Met") || toast.message.includes("Not Met");
                   return (

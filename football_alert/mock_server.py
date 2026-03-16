@@ -16,7 +16,8 @@ _fixture_progress = {}
 
 # Notification history storage (single source of truth)
 _history_notifications = []
-_history_file = "toast_history.json"
+# Use absolute path based on module location to avoid directory issues
+_history_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "toast_history.json")
 
 # Mock fixtures with real team names (6 matches)
 MOCK_FIXTURES = [
@@ -59,6 +60,8 @@ def _save_history_notifications():
 def add_history_notification(title, message, fixture_id=None, match_name=None):
     """Add a new notification to history and save to file."""
     global _history_notifications
+    # Load existing notifications from file first to ensure consistency
+    _load_history_notifications()
     notification = {
         "id": int(time.time() * 1000),  # Simple timestamp-based ID
         "timestamp": datetime.now().isoformat(),
@@ -86,6 +89,50 @@ def delete_history_notification(notification_id):
     if deleted:
         _save_history_notifications()
     return deleted
+
+
+def clear_all_history_notifications():
+    """Clear all notifications from history and save to file."""
+    global _history_notifications
+    _load_history_notifications()
+    count = len(_history_notifications)
+    _history_notifications = []
+    _save_history_notifications()
+    return count
+
+
+def clear_filtered_history_notifications(filter_type):
+    """Clear notifications from history based on filter type and save to file.
+    filter_type: 'all' - delete all, 'met' - delete only successful, 'unmet' - delete only failed
+    Returns the count of deleted notifications.
+    """
+    global _history_notifications
+    _load_history_notifications()
+    
+    original_count = len(_history_notifications)
+    
+    if filter_type == "all":
+        _history_notifications = []
+    elif filter_type == "met":
+        # Keep only notifications that are NOT "Conditions Met" (i.e., delete successful ones)
+        _history_notifications = [
+            n for n in _history_notifications 
+            if "Not Met" in n.get("title", "") or "Not Met" in n.get("message", "")
+        ]
+    elif filter_type == "unmet":
+        # Keep only notifications that are NOT "Conditions Not Met" (i.e., delete failed ones)
+        _history_notifications = [
+            n for n in _history_notifications 
+            if "Not Met" not in n.get("title", "") and "Not Met" not in n.get("message", "")
+        ]
+    else:
+        # Default to all if unknown filter
+        _history_notifications = []
+    
+    deleted_count = original_count - len(_history_notifications)
+    if deleted_count > 0:
+        _save_history_notifications()
+    return deleted_count
 
 
 def _get_fixture_teams(fixture_id):
@@ -287,8 +334,21 @@ class MockAPIHandler(BaseHTTPRequestHandler):
         """Handle DELETE requests for removing history notifications."""
         parsed_path = urlparse(self.path)
         path = parsed_path.path
+        query_components = parse_qs(parsed_path.query)
         
-        if path.startswith('/api/history/'):
+        if path == '/api/history':
+            # Clear notifications based on filter query parameter
+            filter_type = query_components.get('filter', ['all'])[0]
+            count = clear_filtered_history_notifications(filter_type)
+            self._set_headers()
+            response_data = {
+                "success": True,
+                "message": f"Cleared {count} notification(s)",
+                "deleted_count": count,
+                "filter": filter_type
+            }
+            self.wfile.write(json.dumps(response_data).encode('utf-8'))
+        elif path.startswith('/api/history/'):
             # Extract notification ID from path: /api/history/{id}
             try:
                 notification_id = int(path.split('/')[-1])
