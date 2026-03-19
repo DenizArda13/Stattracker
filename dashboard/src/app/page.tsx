@@ -58,6 +58,28 @@ interface ToastHistoryItem {
   type: string;
 }
 
+interface SlipCondition {
+  fixture_id: number;
+  home_team: string;
+  away_team: string;
+  stat: string;
+  team: string;
+  condition: string;
+  target: number;
+  result_value?: number | null;
+  met?: boolean;
+}
+
+interface BettingSlip {
+  id: number;
+  name: string;
+  code: string;
+  conditions: SlipCondition[];
+  status: "pending" | "won" | "lost";
+  created_at: string;
+  evaluated_at?: string | null;
+}
+
 interface TrackedMatch {
   fixtureId: number;
   homeTeam: string;
@@ -104,7 +126,7 @@ export default function Home() {
   const [allLiveData, setAllLiveData] = useState<Record<number, LiveData>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"live" | "history" | "track">("live");
+  const [activeTab, setActiveTab] = useState<"live" | "history" | "track" | "slips">("live");
   const [historyFilter, setHistoryFilter] = useState<"all" | "met" | "unmet">("all");
 
   // Track Matches State
@@ -116,6 +138,23 @@ export default function Home() {
     fixtureId: null,
     conditions: [{ stat: "Corners", target: "", team: "Home" }]
   });
+
+  // Betting Slips State
+  const [bettingSlips, setBettingSlips] = useState<BettingSlip[]>([]);
+  const [slipName, setSlipName] = useState<string>("");
+  const [slipFormConditions, setSlipFormConditions] = useState<Array<{
+    fixtureId: number | null;
+    team: string;
+    stat: string;
+    condition: string;
+    target: number | "";
+  }>>([{
+    fixtureId: null,
+    team: "Home",
+    stat: "Goals",
+    condition: "Over",
+    target: ""
+  }]);
 
   // Notification State
   const { permission, isSupported, requestPermission, sendNotification } = useBrowserNotifications();
@@ -148,6 +187,85 @@ export default function Home() {
       console.error("Failed to fetch history:", err);
     }
   }, []);
+
+  // Fetch betting slips with real-time polling
+  const fetchSlips = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/slips`);
+      if (!res.ok) throw new Error("Failed to fetch slips");
+      const data = await res.json();
+      setBettingSlips(data.response);
+    } catch (err) {
+      console.error("Failed to fetch slips:", err);
+    }
+  }, []);
+
+  const createSlip = useCallback(async () => {
+    // Validate all conditions have required fields
+    const validConditions = slipFormConditions.filter(c => c.fixtureId !== null && c.target !== "");
+    if (validConditions.length === 0) return;
+    
+    try {
+      const res = await fetch(`${API_BASE}/api/slips`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: slipName.trim() || undefined,
+          conditions: validConditions.map(c => ({
+            fixture_id: c.fixtureId,
+            stat: c.stat,
+            team: c.team,
+            condition: c.condition,
+            target: c.target,
+          })),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to create slip");
+      // Reset form with one empty condition
+      setSlipName("");
+      setSlipFormConditions([{
+        fixtureId: null,
+        team: "Home",
+        stat: "Goals",
+        condition: "Over",
+        target: ""
+      }]);
+      fetchSlips();
+    } catch (err) {
+      console.error("Failed to create slip:", err);
+    }
+  }, [slipFormConditions, slipName, fetchSlips]);
+
+  const handleAddSlipCondition = () => {
+    setSlipFormConditions([...slipFormConditions, {
+      fixtureId: null,
+      team: "Home",
+      stat: "Goals",
+      condition: "Over",
+      target: ""
+    }]);
+  };
+
+  const handleRemoveSlipCondition = (index: number) => {
+    const updated = slipFormConditions.filter((_, i) => i !== index);
+    setSlipFormConditions(updated);
+  };
+
+  const handleSlipConditionChange = (index: number, field: string, value: string | number | null) => {
+    const updated = [...slipFormConditions];
+    updated[index] = { ...updated[index], [field]: value };
+    setSlipFormConditions(updated);
+  };
+
+  const deleteSlip = useCallback(async (slipId: number) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/slips/${slipId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete slip");
+      fetchSlips();
+    } catch (err) {
+      console.error("Failed to delete slip:", err);
+    }
+  }, [fetchSlips]);
 
   // Log history notification to server - defined early for use in useEffect
   const logToastToServer = useCallback(async (title: string, message: string, fixtureId?: number, matchName?: string) => {
@@ -232,6 +350,15 @@ export default function Home() {
     }, 2000);
     return () => clearInterval(interval);
   }, [fixtures]);
+
+  // Poll betting slips for real-time status updates
+  useEffect(() => {
+    fetchSlips();
+    const interval = setInterval(() => {
+      fetchSlips();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [fetchSlips]);
 
   // Check for notification triggers when live data updates
   useEffect(() => {
@@ -545,6 +672,12 @@ export default function Home() {
               >
                 <Settings className="h-4 w-4" /> Track
               </button>
+              <button
+                onClick={() => setActiveTab("slips")}
+                className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${activeTab === "slips" ? "bg-gray-700 text-white shadow-sm" : "text-gray-400 hover:text-gray-200"}`}
+              >
+                <Trophy className="h-4 w-4" /> Slips
+              </button>
             </nav>
           </div>
         </div>
@@ -833,6 +966,217 @@ export default function Home() {
                 </div>
               )}
             </div>
+          </div>
+        ) : activeTab === "slips" ? (
+          /* Slips Tab - Betting Slips with Multiple Conditions */
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold flex items-center gap-2">
+              <Trophy className="h-6 w-6 text-yellow-500" />
+              Betting Slips
+            </h2>
+
+            {/* Create Slip Form */}
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-lg">
+              <h3 className="text-xl font-bold mb-4">Create New Slip</h3>
+              <div className="space-y-4">
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-400 mb-1">Slip Name (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="Enter a name for this slip..."
+                    className="w-full max-w-md bg-gray-800 border border-gray-700 rounded-lg p-2 text-white"
+                    value={slipName}
+                    onChange={(e) => setSlipName(e.target.value)}
+                  />
+                </div>
+                {slipFormConditions.map((condition, index) => (
+                  <div key={index} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 items-end bg-gray-800/50 p-4 rounded-xl">
+                    <div className="lg:col-span-2">
+                      <label className="block text-sm font-medium text-gray-400 mb-1">Match</label>
+                      <select
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg p-2 text-white"
+                        value={condition.fixtureId || ""}
+                        onChange={(e) => handleSlipConditionChange(index, "fixtureId", e.target.value ? Number(e.target.value) : null)}
+                      >
+                        <option value="">Select match...</option>
+                        {fixtures.map(f => (
+                          <option key={f.fixture_id} value={f.fixture_id}>{f.home_team} vs {f.away_team}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-1">Team</label>
+                      <select
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg p-2 text-white"
+                        value={condition.team}
+                        onChange={(e) => handleSlipConditionChange(index, "team", e.target.value)}
+                      >
+                        <option value="Home">Home</option>
+                        <option value="Away">Away</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-1">Stat</label>
+                      <select
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg p-2 text-white"
+                        value={condition.stat}
+                        onChange={(e) => handleSlipConditionChange(index, "stat", e.target.value)}
+                      >
+                        <option value="Corners">Corners</option>
+                        <option value="Total Shots">Total Shots</option>
+                        <option value="Goals">Goals</option>
+                        <option value="Shots on Target">Shots on Target</option>
+                        <option value="Fouls Committed">Fouls Committed</option>
+                        <option value="Offsides">Offsides</option>
+                        <option value="Possession %">Possession %</option>
+                        <option value="Pass Accuracy %">Pass Accuracy %</option>
+                        <option value="Yellow Cards">Yellow Cards</option>
+                        <option value="Red Cards">Red Cards</option>
+                        <option value="Tackles">Tackles</option>
+                        <option value="Interceptions">Interceptions</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-400 mb-1">Condition</label>
+                      <select
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg p-2 text-white"
+                        value={condition.condition}
+                        onChange={(e) => handleSlipConditionChange(index, "condition", e.target.value)}
+                      >
+                        <option value="Over">Over</option>
+                        <option value="Under">Under</option>
+                      </select>
+                    </div>
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="block text-sm font-medium text-gray-400 mb-1">Target</label>
+                        <select
+                          className="w-full bg-gray-800 border border-gray-700 rounded-lg p-2 text-white"
+                          value={condition.target}
+                          onChange={(e) => handleSlipConditionChange(index, "target", e.target.value ? Number(e.target.value) : "")}
+                        >
+                          <option value="">Select target...</option>
+                          {Array.from({ length: 100 }, (_, i) => {
+                            const value = (i + 0.5).toFixed(1);
+                            return (
+                              <option key={value} value={value}>
+                                {value}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                      {slipFormConditions.length > 1 && (
+                        <button
+                          onClick={() => handleRemoveSlipCondition(index)}
+                          className="p-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
+                          title="Remove condition"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <div className="flex gap-4">
+                  <button
+                    onClick={handleAddSlipCondition}
+                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm"
+                  >
+                    + Add Condition
+                  </button>
+                  <button
+                    onClick={createSlip}
+                    disabled={slipFormConditions.filter(c => c.fixtureId !== null && c.target !== "").length === 0}
+                    className="px-6 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-bold transition-all"
+                  >
+                    Create Slip
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Slips Grid */}
+            {bettingSlips.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {bettingSlips.slice().reverse().map((slip) => {
+                  const statusColor = slip.status === "won" ? "border-green-500 bg-green-500/10" : slip.status === "lost" ? "border-red-500 bg-red-500/10" : "border-gray-700 bg-gray-900";
+                  const statusBadge = slip.status === "won" ? "bg-green-600 text-white" : slip.status === "lost" ? "bg-red-600 text-white" : "bg-yellow-600 text-black";
+                  
+                  return (
+                    <div key={slip.id} className={`border rounded-2xl p-4 shadow-lg transition-all ${statusColor}`}>
+                      <div className="mb-4 pb-3 border-b border-gray-800">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="font-bold text-lg text-white leading-tight">{slip.name}</h4>
+                            <div className="text-xs font-mono text-gray-500 mt-1">Code: {slip.code}</div>
+                          </div>
+                          <button
+                            onClick={() => deleteSlip(slip.id)}
+                            className="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-red-400 transition-colors"
+                            title="Delete slip"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${statusBadge}`}>
+                            {slip.status}
+                          </span>
+                          <span className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">
+                            {slip.conditions.length} condition{slip.conditions.length > 1 ? "s" : ""}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* Conditions List */}
+                      <div className="space-y-2 mb-3">
+                        {slip.conditions.map((cond, idx) => (
+                          <div key={idx} className={`text-sm p-2 rounded ${cond.met ? 'bg-green-600/20 border border-green-600/30' : cond.met === false ? 'bg-red-600/20 border border-red-600/30' : 'bg-gray-800'}`}>
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium">{cond.home_team} vs {cond.away_team}</span>
+                              {cond.met && <CheckCircle2 className="h-4 w-4 text-green-400" />}
+                              {cond.met === false && <XCircle className="h-4 w-4 text-red-400" />}
+                            </div>
+                            <div className="text-gray-400 text-xs mt-1">
+                              {cond.team} {cond.stat} {cond.condition} {cond.target}
+                              {cond.result_value !== null && cond.result_value !== undefined && (
+                                <span className="ml-2 text-gray-500">(current: {cond.result_value})</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {slip.status === "pending" && (
+                        <div className="flex items-center gap-2 text-xs text-yellow-400">
+                          <Clock className="h-3 w-3 animate-spin" /> Evaluating...
+                        </div>
+                      )}
+                      {slip.status === "won" && (
+                        <div className="flex items-center gap-2 text-xs text-green-400">
+                          <CheckCircle2 className="h-3 w-3" /> All conditions met!
+                        </div>
+                      )}
+                      {slip.status === "lost" && (
+                        <div className="flex items-center gap-2 text-xs text-red-400">
+                          <XCircle className="h-3 w-3" /> {slip.conditions.filter(c => !c.met).length} of {slip.conditions.length} conditions failed
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="min-h-[300px] flex flex-col items-center justify-center text-gray-500 bg-gray-900/50 rounded-2xl border border-dashed border-gray-800">
+                <Trophy className="h-12 w-12 mb-4 opacity-20" />
+                <p>No betting slips yet</p>
+                <p className="text-sm text-gray-600 mt-1">Create a slip above to start tracking!</p>
+              </div>
+            )}
           </div>
         ) : (
           /* History Tab - Notification History Only */

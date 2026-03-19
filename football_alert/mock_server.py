@@ -2,6 +2,8 @@ import threading
 import time
 import json
 import os
+import random
+import string
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
@@ -13,6 +15,11 @@ from datetime import datetime
 # This prevents oscillating values that could cause sync issues for multi-stat AND conditions
 # Simulates realistic match progression (stats only increase or stabilize)
 _fixture_progress = {}
+
+# Betting slips storage (in-memory, evaluated against live match data)
+# Each slip: {id, conditions: [{fixture_id, home_team, away_team, stat, team, condition, target}], status, created_at, evaluated_at}
+_betting_slips = []
+_slip_id_counter = 0
 
 # Notification history storage (single source of truth)
 _history_notifications = []
@@ -142,6 +149,153 @@ def _get_fixture_teams(fixture_id):
         if str(fixture["fixture_id"]) == fixture_id:
             return fixture["home_team"], fixture["away_team"]
     return "Home Team", "Away Team"
+
+
+# Betting slip functions
+def _generate_slip_code():
+    """Generate a random 13-digit numeric slip code."""
+    return ''.join(random.choices(string.digits, k=13))
+
+
+def create_betting_slip(conditions, name=None):
+    """Create a new betting slip with multiple conditions and return it.
+    
+    conditions: list of {fixture_id, stat, team, condition, target}
+    name: optional name for the slip
+    """
+    global _slip_id_counter, _betting_slips
+    
+    # Enrich conditions with team names
+    enriched_conditions = []
+    for cond in conditions:
+        fixture_id = int(cond["fixture_id"])
+        home_team, away_team = _get_fixture_teams(fixture_id)
+        enriched_conditions.append({
+            "fixture_id": fixture_id,
+            "home_team": home_team,
+            "away_team": away_team,
+            "stat": cond["stat"],
+            "team": cond["team"],
+            "condition": cond["condition"],
+            "target": float(cond["target"]),
+            "result_value": None,
+            "met": False
+        })
+    
+    _slip_id_counter += 1
+    slip = {
+        "id": _slip_id_counter,
+        "name": name or f"Slip #{_slip_id_counter}",
+        "code": _generate_slip_code(),
+        "conditions": enriched_conditions,
+        "status": "pending",
+        "created_at": datetime.now().isoformat(),
+        "evaluated_at": None
+    }
+    _betting_slips.append(slip)
+    return slip
+
+
+def get_all_betting_slips():
+    """Return all betting slips."""
+    return list(_betting_slips)
+
+
+def delete_betting_slip(slip_id):
+    """Delete a slip by ID. Returns True if deleted."""
+    global _betting_slips
+    original_len = len(_betting_slips)
+    _betting_slips = [s for s in _betting_slips if s["id"] != slip_id]
+    return len(_betting_slips) < original_len
+
+
+def _evaluate_condition(current_value, condition, target):
+    """Evaluate a single condition (Over/Under)."""
+    if current_value is None:
+        return False
+    if condition == "Over":
+        return current_value > target
+    elif condition == "Under":
+        return current_value < target
+    return False
+
+
+def evaluate_betting_slips():
+    """Evaluate all pending slips against current live data. Updates slip status in-place.
+    
+    A slip is:
+    - "won" if ALL conditions are met
+    - "lost" if at least one condition is NOT met when the match is finished (elapsed >= 90)
+    - "pending" otherwise
+    """
+    for slip in _betting_slips:
+        if slip["status"] != "pending":
+            continue
+        
+        all_conditions_met = True
+        any_condition_failed = False
+        all_matches_finished = True
+        
+        for cond in slip["conditions"]:
+            fixture_id = cond["fixture_id"]
+            try:
+                stats, elapsed = generate_mock_stats(fixture_id)
+            except Exception:
+                all_conditions_met = False
+                continue
+            
+            # Check if this match is finished
+            if elapsed < 90:
+                all_matches_finished = False
+            
+            # Find the correct team's stat value
+            team_stats = None
+            for team_data in stats:
+                if team_data["team"]["name"] == cond["team"]:
+                    team_stats = team_data
+                    break
+                # Also match by "Home" / "Away" labels
+                if cond["team"] == "Home" and team_data["team"]["name"] == cond["home_team"]:
+                    team_stats = team_data
+                    break
+                if cond["team"] == "Away" and team_data["team"]["name"] == cond["away_team"]:
+                    team_stats = team_data
+                    break
+            
+            if not team_stats:
+                all_conditions_met = False
+                continue
+            
+            # Find stat value
+            stat_value = None
+            for s in team_stats["statistics"]:
+                if s["type"] == cond["stat"]:
+                    stat_value = s["value"]
+                    break
+            
+            if stat_value is None:
+                all_conditions_met = False
+                continue
+            
+            # Evaluate this condition
+            met = _evaluate_condition(stat_value, cond["condition"], cond["target"])
+            cond["result_value"] = stat_value
+            cond["met"] = met
+            
+            if not met:
+                all_conditions_met = False
+                # Check if this condition failed and match is finished
+                if elapsed >= 90:
+                    any_condition_failed = True
+        
+        slip["evaluated_at"] = datetime.now().isoformat()
+        
+        # Determine slip status
+        if all_conditions_met and len(slip["conditions"]) > 0:
+            slip["status"] = "won"
+        elif any_condition_failed:
+            slip["status"] = "lost"
+        # else remains pending
 
 def generate_mock_stats(fixture_id):
     """
@@ -290,6 +444,16 @@ class MockAPIHandler(BaseHTTPRequestHandler):
             }
             self._set_headers()
             self.wfile.write(json.dumps(response_data).encode('utf-8'))
+        elif path == '/api/slips':
+            # Evaluate slips before returning
+            evaluate_betting_slips()
+            slips = get_all_betting_slips()
+            response_data = {
+                "results": len(slips),
+                "response": slips
+            }
+            self._set_headers()
+            self.wfile.write(json.dumps(response_data).encode('utf-8'))
         else:
             self.send_error(404, "Endpoint not found in mock server")
 
@@ -327,11 +491,42 @@ class MockAPIHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps(response_data).encode('utf-8'))
             except Exception as e:
                 self.send_error(400, f"Invalid request data: {str(e)}")
+        elif path == '/api/slips':
+            # Create a new betting slip with multiple conditions
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            
+            try:
+                data = json.loads(post_data.decode('utf-8'))
+                conditions = data.get('conditions', [])
+                name = data.get('name')
+                
+                if not conditions or not isinstance(conditions, list):
+                    self.send_error(400, "Missing required field: conditions (array)")
+                    return
+                
+                # Validate each condition
+                for cond in conditions:
+                    if cond.get('fixture_id') is None or cond.get('stat') is None or cond.get('target') is None:
+                        self.send_error(400, "Each condition requires: fixture_id, stat, target")
+                        return
+                
+                slip = create_betting_slip(conditions, name=name)
+                
+                self._set_headers()
+                response_data = {
+                    "success": True,
+                    "message": "Betting slip created",
+                    "slip": slip
+                }
+                self.wfile.write(json.dumps(response_data).encode('utf-8'))
+            except Exception as e:
+                self.send_error(400, f"Invalid request data: {str(e)}")
         else:
             self.send_error(404, "Endpoint not found in mock server")
 
     def do_DELETE(self):
-        """Handle DELETE requests for removing history notifications."""
+        """Handle DELETE requests for removing history notifications and betting slips."""
         parsed_path = urlparse(self.path)
         path = parsed_path.path
         query_components = parse_qs(parsed_path.query)
@@ -365,6 +560,23 @@ class MockAPIHandler(BaseHTTPRequestHandler):
                     self.send_error(404, "Notification not found")
             except (ValueError, IndexError):
                 self.send_error(400, "Invalid notification ID")
+        elif path.startswith('/api/slips/'):
+            # Delete betting slip by ID
+            try:
+                slip_id = int(path.split('/')[-1])
+                deleted = delete_betting_slip(slip_id)
+                
+                if deleted:
+                    self._set_headers()
+                    response_data = {
+                        "success": True,
+                        "message": "Betting slip deleted successfully"
+                    }
+                    self.wfile.write(json.dumps(response_data).encode('utf-8'))
+                else:
+                    self.send_error(404, "Betting slip not found")
+            except (ValueError, IndexError):
+                self.send_error(400, "Invalid slip ID")
         else:
             self.send_error(404, "Endpoint not found in mock server")
 
