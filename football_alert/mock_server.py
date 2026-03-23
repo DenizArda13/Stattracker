@@ -110,7 +110,8 @@ def clear_all_history_notifications():
 
 def clear_filtered_history_notifications(filter_type):
     """Clear notifications from history based on filter type and save to file.
-    filter_type: 'all' - delete all, 'met' - delete only successful, 'unmet' - delete only failed
+    filter_type: 'all' - delete all, 'met' - delete only tracking met, 'unmet' - delete only tracking unmet,
+                 'slip_won' - delete only betting slip won, 'slip_lost' - delete only betting slip lost
     Returns the count of deleted notifications.
     """
     global _history_notifications
@@ -121,16 +122,29 @@ def clear_filtered_history_notifications(filter_type):
     if filter_type == "all":
         _history_notifications = []
     elif filter_type == "met":
-        # Keep only notifications that are NOT "Conditions Met" (i.e., delete successful ones)
+        # Keep only notifications that are NOT "Conditions Met" tracking notifications
         _history_notifications = [
             n for n in _history_notifications 
-            if "Not Met" in n.get("title", "") or "Not Met" in n.get("message", "")
+            if "Not Met" in n.get("title", "") or "Not Met" in n.get("message", "") or 
+               "Betting Slip" in n.get("title", "")
         ]
     elif filter_type == "unmet":
-        # Keep only notifications that are NOT "Conditions Not Met" (i.e., delete failed ones)
+        # Keep only notifications that are NOT "Conditions Not Met" tracking notifications
         _history_notifications = [
             n for n in _history_notifications 
             if "Not Met" not in n.get("title", "") and "Not Met" not in n.get("message", "")
+        ]
+    elif filter_type == "slip_won":
+        # Keep only notifications that are NOT "Betting Slip Won"
+        _history_notifications = [
+            n for n in _history_notifications 
+            if "Betting Slip Won" not in n.get("title", "")
+        ]
+    elif filter_type == "slip_lost":
+        # Keep only notifications that are NOT "Betting Slip Lost"
+        _history_notifications = [
+            n for n in _history_notifications 
+            if "Betting Slip Lost" not in n.get("title", "")
         ]
     else:
         # Default to all if unknown filter

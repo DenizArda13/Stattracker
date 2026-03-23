@@ -127,7 +127,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"live" | "history" | "track" | "slips">("live");
-  const [historyFilter, setHistoryFilter] = useState<"all" | "met" | "unmet">("all");
+  const [historyFilter, setHistoryFilter] = useState<"all" | "met" | "unmet" | "slip_won" | "slip_lost">("all");
 
   // Track Matches State
   const [trackedMatches, setTrackedMatches] = useState<TrackedMatch[]>([]);
@@ -159,6 +159,8 @@ export default function Home() {
   // Notification State
   const { permission, isSupported, requestPermission, sendNotification } = useBrowserNotifications();
   const notifiedConditionsRef = useRef<Set<string>>(new Set());
+  const notifiedSlipsRef = useRef<Set<number>>(new Set()); // Track notified betting slips by ID
+  const notifiedSlipMatchRef = useRef<Set<string>>(new Set()); // Track notified (slipId-fixtureId) for per-match condition alerts
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [toastHistory, setToastHistory] = useState<ToastHistoryItem[]>([]);
 
@@ -321,6 +323,8 @@ export default function Home() {
         all: "All notifications have been removed from history.",
         met: "All 'Conditions Met' notifications have been removed from history.",
         unmet: "All 'Conditions Not Met' notifications have been removed from history.",
+        slip_won: "All 'Betting Slip Won' notifications have been removed from history.",
+        slip_lost: "All 'Betting Slip Lost' notifications have been removed from history.",
       };
       addToast("History Cleared", filterMessages[historyFilter] || "Notifications have been removed from history.", "success");
     } catch (err) {
@@ -474,6 +478,105 @@ export default function Home() {
       });
     });
   }, [allLiveData, trackedMatches, sendNotification, addToast, logToastToServer]);
+
+  // Check for betting slip notifications when slip status changes
+  useEffect(() => {
+    if (bettingSlips.length === 0) return;
+
+    // Per-match condition notifications for betting slips (not stored in history)
+    bettingSlips.forEach((slip) => {
+      // Only process pending slips for per-match notifications
+      if (slip.status !== "pending") return;
+
+      // Group conditions by fixture_id
+      const conditionsByFixture: Record<number, typeof slip.conditions> = {};
+      slip.conditions.forEach((cond) => {
+        if (!conditionsByFixture[cond.fixture_id]) {
+          conditionsByFixture[cond.fixture_id] = [];
+        }
+        conditionsByFixture[cond.fixture_id].push(cond);
+      });
+
+      // Check each fixture for all-conditions-met
+      Object.keys(conditionsByFixture).forEach((fixtureIdStr) => {
+        const fixtureId = parseInt(fixtureIdStr, 10);
+        const fixtureConditions = conditionsByFixture[fixtureId];
+        const allMet = fixtureConditions.every((c) => c.met === true);
+
+        // Create a unique key for this (slip, fixture) pair
+        const slipMatchKey = `${slip.id}-${fixtureId}`;
+
+        // Only notify if all conditions for this match are met and not yet notified
+        if (allMet && fixtureConditions.length > 0 && !notifiedSlipMatchRef.current.has(slipMatchKey)) {
+          const matchName = `${fixtureConditions[0].home_team} vs ${fixtureConditions[0].away_team}`;
+          const conditionDetails = fixtureConditions.map((c) => {
+            const currentVal = c.result_value !== null && c.result_value !== undefined ? c.result_value : "N/A";
+            return `${c.team} ${c.stat} ${c.condition} ${c.target} (current: ${currentVal})`;
+          }).join(", ");
+
+          const title = `🎯 Slip Alert: ${slip.name}`;
+          const message = `${slip.name} (${slip.code})\n${matchName}\n${conditionDetails}`;
+
+          // Send browser notification (no history logging)
+          sendNotification(title, { body: message, tag: `slip-match-${slipMatchKey}` });
+
+          // Show in-app toast (disappears automatically, not stored in history)
+          addToast(title, message, "success");
+
+          // Mark as notified for this (slip, match) pair
+          notifiedSlipMatchRef.current.add(slipMatchKey);
+        }
+      });
+    });
+
+    // Existing slip-level notifications for won/lost status
+    bettingSlips.forEach((slip) => {
+      // Skip if already notified for this slip
+      if (notifiedSlipsRef.current.has(slip.id)) return;
+
+      // Only notify for won or lost status
+      if (slip.status === "won") {
+        const title = `🏆 Betting Slip Won!`;
+        const matchNames = [...new Set(slip.conditions.map(c => `${c.home_team} vs ${c.away_team}`))].join(", ");
+        const conditionDetails = slip.conditions.map(c => 
+          `${c.home_team} vs ${c.away_team} - ${c.team} ${c.stat} ${c.condition} ${c.target} (result: ${c.result_value})`
+        ).join("\n");
+        const message = `${slip.name}\nAll conditions met:\n${conditionDetails}`;
+
+        // Send browser notification
+        sendNotification(title, { body: message, tag: `slip-${slip.id}` });
+
+        // Show in-app toast with name, code, and conditions met count
+        addToast(title, `${slip.name} (${slip.code}) - ${slip.conditions.length} of ${slip.conditions.length} conditions met`, "success");
+
+        // Log to server for history
+        logToastToServer(title, message, undefined, matchNames);
+
+        // Mark as notified
+        notifiedSlipsRef.current.add(slip.id);
+      } else if (slip.status === "lost") {
+        const title = `❌ Betting Slip Lost`;
+        const matchNames = [...new Set(slip.conditions.map(c => `${c.home_team} vs ${c.away_team}`))].join(", ");
+        const failedConditions = slip.conditions.filter(c => !c.met);
+        const conditionDetails = failedConditions.map(c => 
+          `${c.home_team} vs ${c.away_team} - ${c.team} ${c.stat} ${c.condition} ${c.target} (result: ${c.result_value})`
+        ).join("\n");
+        const message = `${slip.name}\nFailed conditions:\n${conditionDetails}`;
+
+        // Send browser notification
+        sendNotification(title, { body: message, tag: `slip-${slip.id}` });
+
+        // Show in-app toast with name, code, and unmet conditions count
+        addToast(title, `${slip.name} (${slip.code}) - ${failedConditions.length} of ${slip.conditions.length} conditions failed`, "error");
+
+        // Log to server for history
+        logToastToServer(title, message, undefined, matchNames);
+
+        // Mark as notified
+        notifiedSlipsRef.current.add(slip.id);
+      }
+    });
+  }, [bettingSlips, sendNotification, addToast, logToastToServer]);
 
   // Fetch toast history periodically when on history tab
   useEffect(() => {
@@ -1191,12 +1294,18 @@ export default function Home() {
                   <Filter className="h-4 w-4 text-gray-400" />
                   <select
                     value={historyFilter}
-                    onChange={(e) => setHistoryFilter(e.target.value as "all" | "met" | "unmet")}
+                    onChange={(e) => setHistoryFilter(e.target.value as "all" | "met" | "unmet" | "slip_won" | "slip_lost")}
                     className="bg-gray-800 border border-gray-700 rounded-lg p-2 text-white text-sm focus:outline-none focus:border-blue-500"
                   >
                     <option value="all">All Notifications</option>
-                    <option value="met">Conditions Met</option>
-                    <option value="unmet">Conditions Not Met</option>
+                    <optgroup label="Statistic Tracking">
+                      <option value="met">Conditions Met</option>
+                      <option value="unmet">Conditions Not Met</option>
+                    </optgroup>
+                    <optgroup label="Betting Slips">
+                      <option value="slip_won">Slip Won</option>
+                      <option value="slip_lost">Slip Lost</option>
+                    </optgroup>
                   </select>
                 </div>
                 <div className="text-sm text-gray-500">{toastHistory.length} alerts recorded</div>
@@ -1217,26 +1326,71 @@ export default function Home() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {toastHistory.slice().reverse().filter(toast => {
                   if (historyFilter === "all") return true;
-                  const isError = toast.title.includes("Not Met") || toast.message.includes("Not Met");
-                  return historyFilter === "unmet" ? isError : !isError;
+                  
+                  // Check notification type based on title
+                  const isSlipWon = toast.title.includes("Betting Slip Won");
+                  const isSlipLost = toast.title.includes("Betting Slip Lost");
+                  const isTrackingMet = !isSlipWon && !isSlipLost && (toast.title.includes("All Conditions Met") || (!toast.title.includes("Not Met") && !toast.title.includes("Lost")));
+                  const isTrackingUnmet = toast.title.includes("Not Met") || toast.message.includes("Not Met");
+                  
+                  switch (historyFilter) {
+                    case "met":
+                      return isTrackingMet;
+                    case "unmet":
+                      return isTrackingUnmet;
+                    case "slip_won":
+                      return isSlipWon;
+                    case "slip_lost":
+                      return isSlipLost;
+                    default:
+                      return true;
+                  }
                 }).map((toast) => {
-                  // Determine if this is an error notification (conditions not met)
-                  const isError = toast.title.includes("Not Met") || toast.message.includes("Not Met");
+                  // Determine notification type for styling
+                  const isSlipWon = toast.title.includes("Betting Slip Won");
+                  const isSlipLost = toast.title.includes("Betting Slip Lost");
+                  const isTrackingUnmet = toast.title.includes("Not Met") || toast.message.includes("Not Met");
+                  const isSuccess = isSlipWon || (!isSlipLost && !isTrackingUnmet);
+                  
+                  // Determine notification category for display
+                  let statusLabel = "All Conditions Met!";
+                  let statusIcon = CheckCircle2;
+                  let borderColor = "border-green-500/30";
+                  let bgColor = "bg-green-900/20";
+                  let textColor = "text-green-400";
+                  let iconColor = "text-green-500";
+                  
+                  if (isSlipWon) {
+                    statusLabel = "Betting Slip Won!";
+                    borderColor = "border-green-500/30";
+                    bgColor = "bg-green-900/20";
+                    textColor = "text-green-400";
+                    iconColor = "text-green-500";
+                  } else if (isSlipLost) {
+                    statusLabel = "Betting Slip Lost!";
+                    statusIcon = XCircle;
+                    borderColor = "border-red-500/30";
+                    bgColor = "bg-red-900/20";
+                    textColor = "text-red-400";
+                    iconColor = "text-red-500";
+                  } else if (isTrackingUnmet) {
+                    statusLabel = "Conditions Not Met!";
+                    statusIcon = XCircle;
+                    borderColor = "border-red-500/30";
+                    bgColor = "bg-red-900/20";
+                    textColor = "text-red-400";
+                    iconColor = "text-red-500";
+                  }
+                  
+                  const StatusIcon = statusIcon;
+                  
                   return (
-                    <div key={toast.id} className={`bg-gray-900 border rounded-2xl overflow-hidden shadow-lg ${
-                      isError ? "border-red-500/30" : "border-green-500/30"
-                    }`}>
-                      <div className={`px-6 py-4 border-b flex justify-between items-center ${
-                        isError ? "bg-red-900/20 border-red-500/30" : "bg-green-900/20 border-green-500/30"
-                      }`}>
+                    <div key={toast.id} className={`bg-gray-900 border rounded-2xl overflow-hidden shadow-lg ${borderColor}`}>
+                      <div className={`px-6 py-4 border-b flex justify-between items-center ${bgColor} ${borderColor}`}>
                         <div className="flex items-center gap-3">
-                          {isError ? (
-                            <XCircle className="h-5 w-5 text-red-500" />
-                          ) : (
-                            <CheckCircle2 className="h-5 w-5 text-green-500" />
-                          )}
-                          <span className={`font-bold ${isError ? "text-red-400" : "text-green-400"}`}>
-                            {isError ? "Conditions Not Met!" : "All Conditions Met!"}
+                          <StatusIcon className={`h-5 w-5 ${iconColor}`} />
+                          <span className={`font-bold ${textColor}`}>
+                            {statusLabel}
                           </span>
                         </div>
                         <div className="flex items-center gap-3">
@@ -1246,9 +1400,11 @@ export default function Home() {
                           <button
                             onClick={() => deleteToastNotification(toast.id)}
                             className={`p-1.5 rounded-lg transition-all ${
-                              isError
-                                ? "hover:bg-red-600/30 text-red-400"
-                                : "hover:bg-green-600/30 text-green-400"
+                              isSlipWon
+                                ? "hover:bg-green-600/30 text-green-400"
+                                : isSuccess
+                                ? "hover:bg-green-600/30 text-green-400"
+                                : "hover:bg-red-600/30 text-red-400"
                             }`}
                             title="Delete notification"
                           >

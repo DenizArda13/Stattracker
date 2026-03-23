@@ -100,6 +100,8 @@ The mock server provides the following endpoints:
 - **Live Match Tracking**: Real-time statistics with 2-second polling
 - **Fixture Selection**: Choose from 6 available matches
 - **Session History**: View past monitoring sessions
+- **Betting Slips**: Create and track multi-condition betting slips with toast notifications
+- **Per-Match Slip Alerts**: Toast notifications when all conditions for a match in a slip are met (name, code, current value, target value; not stored in history)
 - **Responsive Design**: Dark mode UI built with Tailwind CSS
 - **Container Support**: Configurable API endpoint via environment variables
 
